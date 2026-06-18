@@ -7,6 +7,7 @@ import { findProjectDir, listSessions, listSessionIds, findSubProjects, pathExis
 import { renderTranscript } from '../src/transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from '../src/actions.mjs';
 import { runInteractive } from '../src/tui.mjs';
+import { cmdSkills } from '../src/skills-command.mjs';
 import { pipeToViewer, hasGlow, formatDate, resolveId, MISSING } from '../src/util.mjs';
 
 /**
@@ -135,6 +136,26 @@ program
   .command('resume <id>')
   .description('Run `claude --resume <sessionId>`.')
   .action(cmdResume);
+
+program
+  .command('skills')
+  .description('Statistiques d\'utilisation des skills sur tout l\'historique Claude Code.')
+  .option('--timeseries', 'Évolution dans le temps (matrice skill × période)')
+  .option('--success', 'Taux de succès par skill + invocations invalides (Unknown skill)')
+  .option('--cooccurrence', 'Paires de skills partageant une même session')
+  .option('--by-project', 'Matrice skill × projet')
+  .option('--events', 'Dump du dataset brut normalisé (granularité maximale)')
+  .option('--bucket <unit>', 'Granularité temporelle : day|week|month', 'month')
+  .option('--pivot', 'Pour --timeseries : matrice large (période × skill) au lieu du format long')
+  .option('--channel <chan>', 'Filtrer le canal : tool|slash|all', 'all')
+  .option('--no-dedupe', 'Ne pas fusionner le double-log tool+slash d\'une même activation')
+  .option('--skill <pattern>', 'Filtrer les skills (sous-chaîne ou regex, insensible à la casse)')
+  .option('--since <iso>', 'Borne basse incluse sur la date (ex. 2026-05-01)')
+  .option('--until <iso>', 'Borne haute incluse sur la date')
+  .option('--format <fmt>', 'Format de sortie : table|csv|json', 'table')
+  .option('--root <path>', 'Racine des transcripts (défaut ~/.claude/projects)')
+  .option('--out <file>', 'Écrire dans un fichier au lieu de stdout')
+  .action(cmdSkills);
 
 program.action(async () => {
   const found = await findProjectDir(process.cwd());
