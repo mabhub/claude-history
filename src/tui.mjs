@@ -101,8 +101,10 @@ export const runInteractive = async ({ dir, cwd, walkedUp }) => {
     }
 
     const session = sessions.find(s => s.sessionId === choice);
-    const keepGoing = await runActionMenu(session);
-    if (!keepGoing) return;
+    const outcome = await runActionMenu(session);
+    if (outcome === EXIT) return;
+    // BACK falls through to the next loop iteration, which re-fetches
+    // sessions (delete is reflected immediately).
   }
 };
 
@@ -148,6 +150,14 @@ const formatChoice = s => {
   return `${badge} ${idShort}  ${date}  ${title}`;
 };
 
+// Action handlers return one of:
+//   'submenu' : stay on the per-session action menu (re-display it)
+//   'list'    : go back to the conversation list
+//   'exit'    : quit the whole TUI
+const STAY = 'submenu';
+const BACK = 'list';
+const EXIT = 'exit';
+
 const viewTranscript = async (session, { raw }) => {
   const useMarkdown = !raw && hasGlow();
   const text = await renderTranscript({
@@ -156,7 +166,7 @@ const viewTranscript = async (session, { raw }) => {
     style: useMarkdown ? 'markdown' : 'ansi',
   });
   await pipeToViewer({ text, markdown: useMarkdown });
-  return true;
+  return STAY;
 };
 
 const renameAction = async session => {
@@ -172,7 +182,7 @@ const renameAction = async session => {
     });
     console.log(pc.green(`✓ Renommé: ${title}`));
   }
-  return true;
+  return STAY;
 };
 
 const deleteAction = async session => {
@@ -180,19 +190,19 @@ const deleteAction = async session => {
     message: `Supprimer définitivement "${session.title}" ?`,
     default: false,
   }).catch(handleCancel);
-  if (ok) {
-    const { removedDir } = await deleteSession({
-      filePath: session.filePath,
-      sessionId: session.sessionId,
-    });
-    console.log(pc.green(`✓ Supprimé${removedDir ? ' (+ dossier associé)' : ''}`));
-  }
-  return true;
+  if (!ok) return STAY;
+  const { removedDir } = await deleteSession({
+    filePath: session.filePath,
+    sessionId: session.sessionId,
+  });
+  console.log(pc.green(`✓ Supprimé${removedDir ? ' (+ dossier associé)' : ''}`));
+  // Session no longer exists — fall back to the refreshed list.
+  return BACK;
 };
 
 const resumeAction = async session => {
   await resumeSession(session.sessionId);
-  return false;
+  return EXIT;
 };
 
 const ACTION_HANDLERS = {
@@ -201,28 +211,31 @@ const ACTION_HANDLERS = {
   rename: renameAction,
   delete: deleteAction,
   resume: resumeAction,
-  back: () => true,
-  quit: () => false,
 };
 
 const runActionMenu = async session => {
-  const action = await selectQuittable({
-    message: `${session.sessionId.slice(0, 8)} — ${session.title}`,
-    choices: [
-      { name: 'Voir le transcript', value: 'view' },
-      { name: 'Voir le transcript (brut JSONL)', value: 'view-raw' },
-      { name: 'Renommer', value: 'rename' },
-      { name: 'Supprimer', value: 'delete' },
-      { name: 'Reprendre (claude --resume)', value: 'resume' },
-      { name: pc.dim(`← Retour à la liste ${pc.dim('(q)')}`), value: 'back' },
-      { name: pc.dim('Quitter'), value: 'quit' },
-    ],
-  });
+  while (true) {
+    const action = await selectQuittable({
+      message: `${session.sessionId.slice(0, 8)} — ${session.title}`,
+      choices: [
+        { name: 'Voir le transcript', value: 'view' },
+        { name: 'Voir le transcript (brut JSONL)', value: 'view-raw' },
+        { name: 'Renommer', value: 'rename' },
+        { name: 'Supprimer', value: 'delete' },
+        { name: 'Reprendre (claude --resume)', value: 'resume' },
+        { name: pc.dim(`← Retour à la liste ${pc.dim('(q)')}`), value: 'back' },
+        { name: pc.dim('Quitter'), value: 'quit' },
+      ],
+    });
 
-  // `q` here means "back to the list", not "quit the whole TUI".
-  if (action === QUIT || action === 'back') return true;
-  if (action === null || action === 'quit') return false;
-  return ACTION_HANDLERS[action](session);
+    if (action === QUIT || action === 'back') return BACK;
+    if (action === null || action === 'quit') return EXIT;
+
+    const outcome = await ACTION_HANDLERS[action](session);
+    if (outcome === BACK) return BACK;
+    if (outcome === EXIT) return EXIT;
+    // outcome === STAY: loop and re-display the action menu for this session.
+  }
 };
 
 /**
