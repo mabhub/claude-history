@@ -1,3 +1,4 @@
+import readline from 'node:readline';
 import select, { Separator } from '@inquirer/select';
 import input from '@inquirer/input';
 import confirm from '@inquirer/confirm';
@@ -6,6 +7,43 @@ import { listSessions, findSubProjects } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from './actions.mjs';
 import { pipeToViewer, hasGlow, formatDate } from './util.mjs';
+
+/**
+ * Sentinel returned by selectQuittable when the user pressed `q`.
+ * Callers compare with === to distinguish from normal select values.
+ */
+export const QUIT = Symbol('quit');
+
+/**
+ * Run @inquirer/select with an extra global keybinding: pressing `q` aborts
+ * the prompt and returns the QUIT sentinel. Ctrl-C still works as usual
+ * (handled by Inquirer itself, surfaces as ExitPromptError → null).
+ *
+ * Only attach this on list menus — using it around `input` would steal the
+ * `q` keystroke from the typed text.
+ *
+ * @param {Object} config - Same shape as @inquirer/select's config
+ * @returns {Promise<unknown|typeof QUIT|null>} Selected value, QUIT, or null on Ctrl-C
+ */
+const selectQuittable = async config => {
+  readline.emitKeypressEvents(process.stdin);
+  const controller = new AbortController();
+  const onKey = (_, key) => {
+    if (key?.name === 'q' && !key.ctrl && !key.meta) {
+      controller.abort('quit');
+    }
+  };
+  process.stdin.on('keypress', onKey);
+  try {
+    return await select(config, { signal: controller.signal });
+  } catch (err) {
+    if (err?.name === 'AbortPromptError' && err.cause === 'quit') return QUIT;
+    if (err?.name === 'ExitPromptError') return null;
+    throw err;
+  } finally {
+    process.stdin.off('keypress', onKey);
+  }
+};
 
 const TITLE_SOURCE_BADGES = {
   custom: pc.green('●'),
@@ -47,13 +85,13 @@ export const runInteractive = async ({ dir, cwd, walkedUp }) => {
     const pageSize = Math.max(5, (process.stdout.rows ?? 20) - 6);
     const choices = buildChoices({ sessions, subProjects });
 
-    const choice = await select({
+    const choice = await selectQuittable({
       message: 'Choisir une conversation',
       pageSize,
       choices,
-    }).catch(handleCancel);
+    });
 
-    if (!choice || choice === QUIT_VALUE) return;
+    if (choice === null || choice === QUIT || choice === QUIT_VALUE) return;
 
     if (choice.startsWith(SUB_PREFIX)) {
       const subCwd = choice.slice(SUB_PREFIX.length);
@@ -71,7 +109,7 @@ export const runInteractive = async ({ dir, cwd, walkedUp }) => {
 const printHeader = ({ cwd, walkedUp, sessionCount }) => {
   const suffix = walkedUp ? pc.dim(` (remonté depuis ${process.cwd()})`) : '';
   console.log(`\nConversations dans ${pc.bold(cwd)}${suffix}  ${pc.dim(`(${sessionCount})`)}`);
-  console.log(pc.dim(`Légende : ${LEGEND}`));
+  console.log(pc.dim(`Légende : ${LEGEND}  ·  q pour quitter`));
   console.log('');
 };
 
@@ -168,7 +206,7 @@ const ACTION_HANDLERS = {
 };
 
 const runActionMenu = async session => {
-  const action = await select({
+  const action = await selectQuittable({
     message: `${session.sessionId.slice(0, 8)} — ${session.title}`,
     choices: [
       { name: 'Voir le transcript', value: 'view' },
@@ -176,12 +214,14 @@ const runActionMenu = async session => {
       { name: 'Renommer', value: 'rename' },
       { name: 'Supprimer', value: 'delete' },
       { name: 'Reprendre (claude --resume)', value: 'resume' },
-      { name: pc.dim('← Retour à la liste'), value: 'back' },
+      { name: pc.dim(`← Retour à la liste ${pc.dim('(q)')}`), value: 'back' },
       { name: pc.dim('Quitter'), value: 'quit' },
     ],
-  }).catch(handleCancel);
+  });
 
-  if (!action) return false;
+  // `q` here means "back to the list", not "quit the whole TUI".
+  if (action === QUIT || action === 'back') return true;
+  if (action === null || action === 'quit') return false;
   return ACTION_HANDLERS[action](session);
 };
 
