@@ -43,19 +43,14 @@ export const deleteSession = async ({ filePath, sessionId }) => {
 };
 
 /**
- * Replace the current process with `claude --resume <sessionId>`.
- * Note: we can't truly execvp in Node, so we spawn with inherited stdio and exit
- * with the child's exit code.
+ * Spawn `claude --resume <sessionId>` with inherited stdio, then exit with
+ * the child's exit code.
  * @param {string} sessionId - Full session UUID
  * @returns {Promise<never>} Process exits before resolving
  */
 export const resumeSession = sessionId =>
   new Promise((_resolve, reject) => {
-    const child = spawn('claude', ['--resume', sessionId], {
-      stdio: 'inherit',
-    });
+    const child = spawn('claude', ['--resume', sessionId], { stdio: 'inherit' });
     child.on('error', reject);
-    child.on('exit', code => {
-      process.exit(code ?? 0);
-    });
+    child.on('exit', code => process.exit(code ?? 0));
   });

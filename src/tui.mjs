@@ -41,17 +41,75 @@ export const runInteractive = async ({ dir, cwd, walkedUp }) => {
     if (!chosenId || chosenId === '__quit__') return;
 
     const session = sessions.find(s => s.sessionId === chosenId);
-    const goBack = await runActionMenu(session);
-    if (!goBack) return;
+    const keepGoing = await runActionMenu(session);
+    if (!keepGoing) return;
   }
+};
+
+const TITLE_SOURCE_BADGES = {
+  custom: pc.green('●'),
+  ai: pc.yellow('●'),
+  prompt: pc.dim('○'),
 };
 
 const formatChoice = s => {
   const idShort = pc.dim(s.sessionId.slice(0, 8));
   const date = pc.cyan(formatDate(s.mtime));
   const title = s.title === '(sans titre)' ? pc.dim(s.title) : s.title;
-  const tag = s.titleSource === 'custom' ? pc.green('●') : s.titleSource === 'ai' ? pc.yellow('●') : pc.dim('○');
-  return `${tag} ${idShort}  ${date}  ${title}`;
+  const badge = TITLE_SOURCE_BADGES[s.titleSource] ?? pc.dim('○');
+  return `${badge} ${idShort}  ${date}  ${title}`;
+};
+
+const viewTranscript = async (session, { raw }) => {
+  const text = await renderTranscript({ filePath: session.filePath, raw });
+  await pipeToPager(text);
+  return true;
+};
+
+const renameAction = async session => {
+  const title = await input({
+    message: 'Nouveau titre',
+    default: session.titleSource === 'custom' ? session.title : '',
+  }).catch(handleCancel);
+  if (title) {
+    await renameSession({
+      filePath: session.filePath,
+      sessionId: session.sessionId,
+      title,
+    });
+    console.log(pc.green(`✓ Renommé: ${title}`));
+  }
+  return true;
+};
+
+const deleteAction = async session => {
+  const ok = await confirm({
+    message: `Supprimer définitivement "${session.title}" ?`,
+    default: false,
+  }).catch(handleCancel);
+  if (ok) {
+    const { removedDir } = await deleteSession({
+      filePath: session.filePath,
+      sessionId: session.sessionId,
+    });
+    console.log(pc.green(`✓ Supprimé${removedDir ? ' (+ dossier associé)' : ''}`));
+  }
+  return true;
+};
+
+const resumeAction = async session => {
+  await resumeSession(session.sessionId);
+  return false;
+};
+
+const ACTION_HANDLERS = {
+  view: session => viewTranscript(session, { raw: false }),
+  'view-raw': session => viewTranscript(session, { raw: true }),
+  rename: renameAction,
+  delete: deleteAction,
+  resume: resumeAction,
+  back: () => true,
+  quit: () => false,
 };
 
 const runActionMenu = async session => {
@@ -68,51 +126,8 @@ const runActionMenu = async session => {
     ],
   }).catch(handleCancel);
 
-  if (!action || action === 'quit') return false;
-  if (action === 'back') return true;
-
-  if (action === 'view' || action === 'view-raw') {
-    const text = await renderTranscript({
-      filePath: session.filePath,
-      raw: action === 'view-raw',
-    });
-    await pipeToPager(text);
-    return true;
-  }
-  if (action === 'rename') {
-    const title = await input({
-      message: 'Nouveau titre',
-      default: session.titleSource === 'custom' ? session.title : '',
-    }).catch(handleCancel);
-    if (title) {
-      await renameSession({
-        filePath: session.filePath,
-        sessionId: session.sessionId,
-        title,
-      });
-      console.log(pc.green(`✓ Renommé: ${title}`));
-    }
-    return true;
-  }
-  if (action === 'delete') {
-    const ok = await confirm({
-      message: `Supprimer définitivement "${session.title}" ?`,
-      default: false,
-    }).catch(handleCancel);
-    if (ok) {
-      const { removedDir } = await deleteSession({
-        filePath: session.filePath,
-        sessionId: session.sessionId,
-      });
-      console.log(pc.green(`✓ Supprimé${removedDir ? ' (+ dossier associé)' : ''}`));
-    }
-    return true;
-  }
-  if (action === 'resume') {
-    await resumeSession(session.sessionId);
-    return false;
-  }
-  return true;
+  if (!action) return false;
+  return ACTION_HANDLERS[action](session);
 };
 
 /**
