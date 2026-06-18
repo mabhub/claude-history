@@ -3,11 +3,11 @@ import path from 'node:path';
 import { program } from 'commander';
 import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
-import { findProjectDir, listSessions, listSessionIds, findSubProjects } from '../src/discover.mjs';
+import { findProjectDir, listSessions, listSessionIds, findSubProjects, pathExists } from '../src/discover.mjs';
 import { renderTranscript } from '../src/transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from '../src/actions.mjs';
 import { runInteractive } from '../src/tui.mjs';
-import { pipeToViewer, hasGlow, formatDate, resolveId } from '../src/util.mjs';
+import { pipeToViewer, hasGlow, formatDate, resolveId, MISSING } from '../src/util.mjs';
 
 /**
  * Resolve the project directory for the current cwd. Walks up to parents
@@ -42,11 +42,15 @@ const resolveSession = async idOrPrefix => {
 
 const cmdLs = async () => {
   const { dir, cwd, walkedUp } = await resolveProject();
-  const sessions = await listSessions(dir);
+  const [sessions, cwdMissing] = await Promise.all([
+    listSessions(dir),
+    pathExists(cwd).then(ok => !ok),
+  ]);
   if (walkedUp) {
     console.log(pc.dim(`(remonté depuis ${process.cwd()} → ${cwd})`));
   }
-  console.log(pc.bold(`Conversations dans ${cwd} (${sessions.length}) :\n`));
+  const missingSuffix = cwdMissing ? `  ${MISSING.badge} ${MISSING.label}` : '';
+  console.log(pc.bold(`Conversations dans ${cwd} (${sessions.length}) :${missingSuffix}\n`));
   for (const s of sessions) {
     const id = pc.dim(s.sessionId.slice(0, 8));
     const date = pc.cyan(formatDate(s.mtime));

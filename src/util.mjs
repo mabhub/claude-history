@@ -1,6 +1,17 @@
 import path from 'node:path';
 import os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
+import pc from 'picocolors';
+
+/**
+ * Shared visual marker for cwds that no longer exist on disk. Reused by the
+ * TUI list/header and the non-interactive `ls` command so the wording stays
+ * in sync across entry points.
+ */
+export const MISSING = {
+  badge: pc.red('⚠'),
+  label: pc.red('(dossier supprimé)'),
+};
 
 /**
  * Encode a working directory path the same way Claude Code does:
@@ -14,12 +25,19 @@ import { spawn, spawnSync } from 'node:child_process';
 export const encodeCwd = cwd => cwd.replaceAll(/[^a-zA-Z0-9]/g, '-');
 
 /**
+ * Default location of the Claude Code projects directory.
+ * @returns {string} Path to ~/.claude/projects
+ */
+export const defaultProjectsRoot = () => path.join(os.homedir(), '.claude', 'projects');
+
+/**
  * Returns the absolute path of the Claude Code projects directory for a given cwd.
  * @param {string} cwd - Absolute working directory path
- * @returns {string} Path under ~/.claude/projects/<encoded>
+ * @param {string} [projectsRoot] - Override the projects root (defaults to ~/.claude/projects)
+ * @returns {string} Path under <projectsRoot>/<encoded>
  */
-export const projectsDirFor = cwd =>
-  path.join(os.homedir(), '.claude', 'projects', encodeCwd(cwd));
+export const projectsDirFor = (cwd, projectsRoot = defaultProjectsRoot()) =>
+  path.join(projectsRoot, encodeCwd(cwd));
 
 /**
  * Format a Date (or ISO string) into a compact local date-time: YYYY-MM-DD HH:mm.
