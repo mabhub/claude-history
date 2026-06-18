@@ -2,7 +2,9 @@ import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
-import { projectsDirFor, truncate } from './util.mjs';
+import os from 'node:os';
+import { projectsDirFor, encodeCwd, truncate } from './util.mjs';
+import { cleanUserText } from './transcript.mjs';
 
 const TAIL_READ_BYTES = 8 * 1024;
 const HEAD_MAX_LINES = 50;
@@ -35,6 +37,83 @@ const dirContainsJsonl = async dir => {
     return entries.some(name => name.endsWith('.jsonl'));
   } catch {
     return false;
+  }
+};
+
+/**
+ * Find sub-projects of `cwd`: descendant directories that also have a Claude
+ * Code transcript folder. Uses the encoded-prefix scan in ~/.claude/projects/
+ * then resolves each candidate back to a real path by walking the local FS.
+ * @param {string} cwd - Absolute path to scan from
+ * @returns {Promise<Array<{cwd: string, dir: string, sessionCount: number}>>}
+ */
+export const findSubProjects = async cwd => {
+  const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
+  const prefix = `${encodeCwd(cwd)}-`;
+  let candidates;
+  try {
+    candidates = await fs.readdir(projectsRoot);
+  } catch {
+    return [];
+  }
+  const matching = candidates.filter(name => name.startsWith(prefix));
+  if (matching.length === 0) return [];
+
+  // Build a map of every encoded(real-subdir-path) -> real path, by walking
+  // the local FS one level at a time. We only go deep enough to cover the
+  // longest matching candidate, and we stop a branch as soon as no candidate
+  // could still match its prefix.
+  const realPaths = await collectMatchingSubpaths(cwd, matching);
+
+  const subs = await Promise.all(
+    Array.from(realPaths).map(async realCwd => {
+      const dir = projectsDirFor(realCwd);
+      const ids = await safeListIds(dir);
+      return { cwd: realCwd, dir, sessionCount: ids.length };
+    }),
+  );
+  return subs
+    .filter(s => s.sessionCount > 0)
+    .toSorted((a, b) => a.cwd.localeCompare(b.cwd));
+};
+
+/**
+ * Walk the FS under `rootCwd`, returning every descendant whose encoded form
+ * appears in `wantedEncoded`. Prunes branches that cannot match any candidate.
+ * @param {string} rootCwd - Local root to walk
+ * @param {Array<string>} wantedEncoded - Encoded project-dir names to match
+ * @returns {Promise<Set<string>>} Real absolute paths
+ */
+const collectMatchingSubpaths = async (rootCwd, wantedEncoded) => {
+  const wanted = new Set(wantedEncoded);
+  const found = new Set();
+  const visit = async dir => {
+    let children;
+    try {
+      children = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const child of children) {
+      if (!child.isDirectory() || child.name.startsWith('.')) continue;
+      const childPath = path.join(dir, child.name);
+      const encoded = encodeCwd(childPath);
+      if (wanted.has(encoded)) found.add(childPath);
+      // Recurse only if at least one candidate still starts with this prefix.
+      const prefix = `${encoded}-`;
+      const shouldRecurse = Array.from(wanted).some(w => w.startsWith(prefix));
+      if (shouldRecurse) await visit(childPath);
+    }
+  };
+  await visit(rootCwd);
+  return found;
+};
+
+const safeListIds = async dir => {
+  try {
+    return await listSessionIds(dir);
+  } catch {
+    return [];
   }
 };
 
@@ -170,10 +249,11 @@ export const listSessions = async dir => {
       readHead(filePath),
       readTailTitles(filePath, stat.size),
     ]);
+    const cleanedPrompt = head.firstUserPrompt ? cleanUserText(head.firstUserPrompt) : '';
     const title =
       tail.customTitle?.trim()
       || tail.aiTitle?.trim()
-      || (head.firstUserPrompt ? truncate(head.firstUserPrompt, 60) : '')
+      || (cleanedPrompt ? truncate(cleanedPrompt, 60) : '')
       || '(sans titre)';
     return {
       sessionId,

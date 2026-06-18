@@ -28,3 +28,8 @@ test('cleanUserText: wraps stdout snippets', () => {
 test('cleanUserText: leaves plain text untouched', () => {
   assert.equal(cleanUserText('Bonjour, comment ça va ?'), 'Bonjour, comment ça va ?');
 });
+
+test('cleanUserText: full caveat-only line becomes empty (for title fallback)', () => {
+  const input = '<local-command-caveat>Caveat: The messages below were generated...</local-command-caveat>';
+  assert.equal(cleanUserText(input), '');
+});

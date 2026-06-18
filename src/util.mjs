@@ -1,6 +1,6 @@
 import path from 'node:path';
 import os from 'node:os';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 /**
  * Encode a working directory path the same way Claude Code does:
@@ -68,15 +68,30 @@ export const resolveId = (idOrPrefix, sessionIds) => {
 };
 
 /**
- * Pipe a string into the user's pager ($PAGER, fallback `less -R`).
- * Resolves when the pager exits.
- * @param {string} text - Content to display
+ * Detect whether `glow` (the markdown TUI renderer) is available in PATH.
+ * Cached after first call.
+ * @returns {boolean} True if `glow` can be spawned
+ */
+let glowAvailable;
+export const hasGlow = () => {
+  if (glowAvailable === undefined) {
+    const probe = spawnSync('glow', ['--version'], { stdio: 'ignore' });
+    glowAvailable = probe.status === 0;
+  }
+  return glowAvailable;
+};
+
+/**
+ * Pipe a string into a viewer. Picks `glow -p` when markdown is true and
+ * glow is installed, otherwise falls back to $PAGER (or `less -R`).
+ * @param {Object} options
+ * @param {string} options.text - Content to display
+ * @param {boolean} [options.markdown=false] - Hint that text is markdown
  * @returns {Promise<void>}
  */
-export const pipeToPager = text =>
+export const pipeToViewer = ({ text, markdown = false }) =>
   new Promise((resolve, reject) => {
-    const pagerEnv = process.env.PAGER?.trim();
-    const [cmd, ...args] = pagerEnv ? pagerEnv.split(/\s+/) : ['less', '-R'];
+    const [cmd, ...args] = pickViewer(markdown);
     const child = spawn(cmd, args, { stdio: ['pipe', 'inherit', 'inherit'] });
     child.on('error', err => {
       if (err.code === 'ENOENT') {
@@ -92,3 +107,9 @@ export const pipeToPager = text =>
     });
     child.stdin.end(text);
   });
+
+const pickViewer = markdown => {
+  if (markdown && hasGlow()) return ['glow', '-p', '-'];
+  const pagerEnv = process.env.PAGER?.trim();
+  return pagerEnv ? pagerEnv.split(/\s+/) : ['less', '-R'];
+};

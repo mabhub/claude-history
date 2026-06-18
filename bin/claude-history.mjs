@@ -3,11 +3,11 @@ import path from 'node:path';
 import { program } from 'commander';
 import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
-import { findProjectDir, listSessions, listSessionIds } from '../src/discover.mjs';
+import { findProjectDir, listSessions, listSessionIds, findSubProjects } from '../src/discover.mjs';
 import { renderTranscript } from '../src/transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from '../src/actions.mjs';
 import { runInteractive } from '../src/tui.mjs';
-import { pipeToPager, formatDate, resolveId } from '../src/util.mjs';
+import { pipeToViewer, hasGlow, formatDate, resolveId } from '../src/util.mjs';
 
 /**
  * Resolve the project directory for the current cwd. Walks up to parents
@@ -57,15 +57,17 @@ const cmdLs = async () => {
 
 const cmdShow = async (idOrPrefix, opts) => {
   const { filePath } = await resolveSession(idOrPrefix);
+  const useMarkdown = !opts.raw && opts.pager !== false && hasGlow();
   const text = await renderTranscript({
     filePath,
     raw: Boolean(opts.raw),
     verbose: Boolean(opts.verbose),
+    style: useMarkdown ? 'markdown' : 'ansi',
   });
   if (opts.pager === false) {
     process.stdout.write(text);
   } else {
-    await pipeToPager(text);
+    await pipeToViewer({ text, markdown: useMarkdown });
   }
 };
 
@@ -131,8 +133,20 @@ program
   .action(cmdResume);
 
 program.action(async () => {
-  const project = await resolveProject();
-  await runInteractive(project);
+  const found = await findProjectDir(process.cwd());
+  if (found.dir) {
+    await runInteractive(found);
+    return;
+  }
+  // No direct project, but maybe sub-projects under the cwd.
+  const subs = await findSubProjects(process.cwd());
+  if (subs.length === 0) {
+    console.error(pc.red(
+      `Aucune conversation Claude Code trouvée pour ${process.cwd()} ni ses parents.`,
+    ));
+    process.exit(1);
+  }
+  await runInteractive({ dir: null, cwd: process.cwd(), walkedUp: false });
 });
 
 program.parseAsync(process.argv).catch(err => {
