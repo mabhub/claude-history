@@ -13,7 +13,7 @@ const HEAD_MAX_LINES = 50;
  * Walk up from `startCwd` until we find a Claude projects directory that
  * contains at least one .jsonl file, or until we hit the filesystem root.
  * @param {string} startCwd - Absolute path to start from
- * @returns {Promise<{dir: string|null, cwd: string|null, walkedUp: boolean}>}
+ * @returns {Promise<{dir: string|null, cwd: string|null, walkedUp: boolean, cwdMissing: boolean}>}
  */
 export const findProjectDir = async startCwd => {
   let current = path.resolve(startCwd);
@@ -21,13 +21,28 @@ export const findProjectDir = async startCwd => {
   while (true) {
     const dir = projectsDirFor(current);
     if (await dirContainsJsonl(dir)) {
-      return { dir, cwd: current, walkedUp: current !== original };
+      const cwdMissing = !(await pathExists(current));
+      return { dir, cwd: current, walkedUp: current !== original, cwdMissing };
     }
     const parent = path.dirname(current);
     if (parent === current) {
-      return { dir: null, cwd: null, walkedUp: false };
+      return { dir: null, cwd: null, walkedUp: false, cwdMissing: false };
     }
     current = parent;
+  }
+};
+
+/**
+ * Check whether a filesystem path exists (any kind).
+ * @param {string} p - Absolute path
+ * @returns {Promise<boolean>}
+ */
+export const pathExists = async p => {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
   }
 };
 
@@ -44,8 +59,11 @@ const dirContainsJsonl = async dir => {
  * Find sub-projects of `cwd`: descendant directories that also have a Claude
  * Code transcript folder. Uses the encoded-prefix scan in ~/.claude/projects/
  * then resolves each candidate back to a real path by walking the local FS.
+ * Encoded dirs with no matching real path are still returned, flagged as
+ * `missing: true` — their `cwd` falls back to the encoded directory name so
+ * the user can still see the orphan and inspect its transcripts.
  * @param {string} cwd - Absolute path to scan from
- * @returns {Promise<Array<{cwd: string, dir: string, sessionCount: number}>>}
+ * @returns {Promise<Array<{cwd: string, dir: string, sessionCount: number, missing: boolean}>>}
  */
 export const findSubProjects = async cwd => {
   const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
@@ -64,15 +82,27 @@ export const findSubProjects = async cwd => {
   // longest matching candidate, and we stop a branch as soon as no candidate
   // could still match its prefix.
   const realPaths = await collectMatchingSubpaths(cwd, matching);
+  const matchedEncoded = new Set(Array.from(realPaths, encodeCwd));
 
-  const subs = await Promise.all(
+  const real = await Promise.all(
     Array.from(realPaths).map(async realCwd => {
       const dir = projectsDirFor(realCwd);
       const ids = await safeListIds(dir);
-      return { cwd: realCwd, dir, sessionCount: ids.length };
+      return { cwd: realCwd, dir, sessionCount: ids.length, missing: false };
     }),
   );
-  return subs
+
+  const orphans = await Promise.all(
+    matching
+      .filter(name => !matchedEncoded.has(name))
+      .map(async name => {
+        const dir = path.join(projectsRoot, name);
+        const ids = await safeListIds(dir);
+        return { cwd: name, dir, sessionCount: ids.length, missing: true };
+      }),
+  );
+
+  return [...real, ...orphans]
     .filter(s => s.sessionCount > 0)
     .toSorted((a, b) => a.cwd.localeCompare(b.cwd));
 };
@@ -122,7 +152,7 @@ const safeListIds = async dir => {
  * transcripts. Walks up to the filesystem root, returning every parent
  * with at least one .jsonl file (excluding `cwd` itself).
  * @param {string} cwd - Absolute path to start from
- * @returns {Promise<Array<{cwd: string, dir: string, sessionCount: number}>>}
+ * @returns {Promise<Array<{cwd: string, dir: string, sessionCount: number, missing: boolean}>>}
  */
 export const findParentProjects = async cwd => {
   const parents = [];
@@ -131,7 +161,8 @@ export const findParentProjects = async cwd => {
     const dir = projectsDirFor(current);
     const ids = await safeListIds(dir);
     if (ids.length > 0) {
-      parents.push({ cwd: current, dir, sessionCount: ids.length });
+      const missing = !(await pathExists(current));
+      parents.push({ cwd: current, dir, sessionCount: ids.length, missing });
     }
     const next = path.dirname(current);
     if (next === current) break;
