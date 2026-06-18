@@ -3,7 +3,7 @@ import select, { Separator } from '@inquirer/select';
 import input from '@inquirer/input';
 import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
-import { listSessions, findSubProjects, findParentProjects } from './discover.mjs';
+import { listSessions, findSubProjects, findParentProjects, pathExists } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from './actions.mjs';
 import { pipeToViewer, hasGlow, formatDate } from './util.mjs';
@@ -71,17 +71,18 @@ const NAV_PREFIX = 'nav:';
  */
 export const runInteractive = async ({ dir, cwd, walkedUp }) => {
   while (true) {
-    const [sessions, subProjects, parentProjects] = await Promise.all([
+    const [sessions, subProjects, parentProjects, cwdMissing] = await Promise.all([
       dir ? listSessions(dir) : Promise.resolve([]),
       findSubProjects(cwd),
       findParentProjects(cwd),
+      pathExists(cwd).then(ok => !ok),
     ]);
     if (sessions.length === 0 && subProjects.length === 0 && parentProjects.length === 0) {
       console.log(pc.yellow('Aucune conversation dans ce dossier.'));
       return;
     }
 
-    printHeader({ cwd, walkedUp, sessionCount: sessions.length });
+    printHeader({ cwd, walkedUp, sessionCount: sessions.length, cwdMissing });
 
     const pageSize = Math.max(5, (process.stdout.rows ?? 20) - 6);
     const choices = buildChoices({ sessions, subProjects, parentProjects });
@@ -109,9 +110,13 @@ export const runInteractive = async ({ dir, cwd, walkedUp }) => {
   }
 };
 
-const printHeader = ({ cwd, walkedUp, sessionCount }) => {
+const MISSING_BADGE = pc.red('⚠');
+const MISSING_LABEL = pc.red('(dossier supprimé)');
+
+const printHeader = ({ cwd, walkedUp, sessionCount, cwdMissing }) => {
   const suffix = walkedUp ? pc.dim(` (remonté depuis ${process.cwd()})`) : '';
-  console.log(`\nConversations dans ${pc.bold(cwd)}${suffix}  ${pc.dim(`(${sessionCount})`)}`);
+  const missing = cwdMissing ? `  ${MISSING_BADGE} ${MISSING_LABEL}` : '';
+  console.log(`\nConversations dans ${pc.bold(cwd)}${suffix}  ${pc.dim(`(${sessionCount})`)}${missing}`);
   console.log(pc.dim(`Légende : ${LEGEND}  ·  q pour quitter`));
   console.log('');
 };
@@ -121,8 +126,11 @@ const buildChoices = ({ sessions, subProjects, parentProjects }) => {
   if (parentProjects.length > 0) {
     choices.push(new Separator(pc.dim('— Dossiers parents avec historique —')));
     for (const parent of parentProjects) {
+      const arrow = parent.missing ? MISSING_BADGE : pc.magenta('▲');
+      const label = parent.missing ? pc.strikethrough(parent.cwd) : pc.bold(parent.cwd);
+      const suffix = parent.missing ? `  ${MISSING_LABEL}` : '';
       choices.push({
-        name: `${pc.magenta('▲')} ${pc.bold(parent.cwd)}  ${pc.dim(`(${parent.sessionCount} conversations)`)}`,
+        name: `${arrow} ${label}  ${pc.dim(`(${parent.sessionCount} conversations)`)}${suffix}`,
         value: `${NAV_PREFIX}${parent.cwd}`,
       });
     }
@@ -130,8 +138,12 @@ const buildChoices = ({ sessions, subProjects, parentProjects }) => {
   if (subProjects.length > 0) {
     choices.push(new Separator(pc.dim('— Sous-dossiers avec historique —')));
     for (const sub of subProjects) {
+      const arrow = sub.missing ? MISSING_BADGE : pc.cyan('▸');
+      const display = sub.missing ? sub.cwd : relativePath(sub.cwd);
+      const label = sub.missing ? pc.strikethrough(display) : pc.bold(display);
+      const suffix = sub.missing ? `  ${MISSING_LABEL}` : '';
       choices.push({
-        name: `${pc.cyan('▸')} ${pc.bold(relativePath(sub.cwd))}  ${pc.dim(`(${sub.sessionCount} conversations)`)}`,
+        name: `${arrow} ${label}  ${pc.dim(`(${sub.sessionCount} conversations)`)}${suffix}`,
         value: `${NAV_PREFIX}${sub.cwd}`,
       });
     }
