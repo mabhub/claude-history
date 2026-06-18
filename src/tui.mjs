@@ -1,15 +1,30 @@
-import select from '@inquirer/select';
+import select, { Separator } from '@inquirer/select';
 import input from '@inquirer/input';
 import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
-import { listSessions } from './discover.mjs';
+import { listSessions, findSubProjects } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from './actions.mjs';
-import { pipeToPager, formatDate } from './util.mjs';
+import { pipeToViewer, hasGlow, formatDate } from './util.mjs';
+
+const TITLE_SOURCE_BADGES = {
+  custom: pc.green('●'),
+  ai: pc.yellow('●'),
+  prompt: pc.dim('○'),
+};
+
+const LEGEND = [
+  `${TITLE_SOURCE_BADGES.custom} titre /rename`,
+  `${TITLE_SOURCE_BADGES.ai} titre auto`,
+  `${TITLE_SOURCE_BADGES.prompt} 1ʳᵉ requête`,
+].join(pc.dim(' · '));
+
+const QUIT_VALUE = '__quit__';
+const SUB_PREFIX = 'sub:';
 
 /**
- * Run the interactive TUI: choose a conversation, then pick an action on it.
- * Loops until the user quits.
+ * Run the interactive TUI. Loops until the user quits or chooses to descend
+ * into a sub-project (then re-enters itself with the new directory).
  * @param {Object} options
  * @param {string} options.dir - Claude projects directory for the cwd
  * @param {string} options.cwd - Resolved working directory
@@ -18,40 +33,73 @@ import { pipeToPager, formatDate } from './util.mjs';
  */
 export const runInteractive = async ({ dir, cwd, walkedUp }) => {
   while (true) {
-    const sessions = await listSessions(dir);
-    if (sessions.length === 0) {
+    const [sessions, subProjects] = await Promise.all([
+      dir ? listSessions(dir) : Promise.resolve([]),
+      findSubProjects(cwd),
+    ]);
+    if (sessions.length === 0 && subProjects.length === 0) {
       console.log(pc.yellow('Aucune conversation dans ce dossier.'));
       return;
     }
 
-    const header = walkedUp
-      ? `Conversations dans ${pc.bold(cwd)} ${pc.dim(`(remonté depuis ${process.cwd()})`)}`
-      : `Conversations dans ${pc.bold(cwd)}`;
-    console.log(`\n${header}  ${pc.dim(`(${sessions.length})`)}\n`);
+    printHeader({ cwd, walkedUp, sessionCount: sessions.length });
 
     const pageSize = Math.max(5, (process.stdout.rows ?? 20) - 6);
+    const choices = buildChoices({ sessions, subProjects });
 
-    const chosenId = await select({
+    const choice = await select({
       message: 'Choisir une conversation',
       pageSize,
-      loop: false,
-      choices: sessions.map(s => ({
-        name: formatChoice(s),
-        value: s.sessionId,
-      })).concat([{ name: pc.dim('— Quitter'), value: '__quit__' }]),
+      choices,
     }).catch(handleCancel);
-    if (!chosenId || chosenId === '__quit__') return;
 
-    const session = sessions.find(s => s.sessionId === chosenId);
+    if (!choice || choice === QUIT_VALUE) return;
+
+    if (choice.startsWith(SUB_PREFIX)) {
+      const subCwd = choice.slice(SUB_PREFIX.length);
+      const sub = subProjects.find(s => s.cwd === subCwd);
+      await runInteractive({ dir: sub.dir, cwd: sub.cwd, walkedUp: false });
+      return;
+    }
+
+    const session = sessions.find(s => s.sessionId === choice);
     const keepGoing = await runActionMenu(session);
     if (!keepGoing) return;
   }
 };
 
-const TITLE_SOURCE_BADGES = {
-  custom: pc.green('●'),
-  ai: pc.yellow('●'),
-  prompt: pc.dim('○'),
+const printHeader = ({ cwd, walkedUp, sessionCount }) => {
+  const suffix = walkedUp ? pc.dim(` (remonté depuis ${process.cwd()})`) : '';
+  console.log(`\nConversations dans ${pc.bold(cwd)}${suffix}  ${pc.dim(`(${sessionCount})`)}`);
+  console.log(pc.dim(`Légende : ${LEGEND}`));
+  console.log('');
+};
+
+const buildChoices = ({ sessions, subProjects }) => {
+  const choices = [];
+  if (subProjects.length > 0) {
+    choices.push(new Separator(pc.dim('— Sous-dossiers avec historique —')));
+    for (const sub of subProjects) {
+      const rel = relativePath(sub.cwd);
+      choices.push({
+        name: `${pc.cyan('▸')} ${pc.bold(rel)}  ${pc.dim(`(${sub.sessionCount} conversations)`)}`,
+        value: `${SUB_PREFIX}${sub.cwd}`,
+      });
+    }
+    choices.push(new Separator(pc.dim('— Conversations du dossier courant —')));
+  }
+  for (const s of sessions) {
+    choices.push({ name: formatChoice(s), value: s.sessionId });
+  }
+  choices.push(new Separator(' '));
+  choices.push({ name: pc.dim('Quitter'), value: QUIT_VALUE });
+  return choices;
+};
+
+const relativePath = subCwd => {
+  const cwd = process.cwd();
+  if (subCwd.startsWith(`${cwd}/`)) return `./${subCwd.slice(cwd.length + 1)}`;
+  return subCwd;
 };
 
 const formatChoice = s => {
@@ -63,8 +111,13 @@ const formatChoice = s => {
 };
 
 const viewTranscript = async (session, { raw }) => {
-  const text = await renderTranscript({ filePath: session.filePath, raw });
-  await pipeToPager(text);
+  const useMarkdown = !raw && hasGlow();
+  const text = await renderTranscript({
+    filePath: session.filePath,
+    raw,
+    style: useMarkdown ? 'markdown' : 'ansi',
+  });
+  await pipeToViewer({ text, markdown: useMarkdown });
   return true;
 };
 

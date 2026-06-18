@@ -53,11 +53,32 @@ clh resume <id>          # exec claude --resume <id>
 ## How it works
 
 Claude Code stores each conversation as `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`
-where `<encoded-cwd>` is the cwd with `/` replaced by `-`. `clh` reads those files,
-streams headers to extract titles, and supports the same `custom-title` mechanism
-that `/rename` uses inside Claude Code (an appended JSONL entry —
-`{"type":"custom-title","customTitle":"...","sessionId":"..."}`).
+where `<encoded-cwd>` is the cwd with every non-alphanumeric character replaced
+by `-` (so `/home/you/.config/foo` becomes `-home-you--config-foo`). `clh` reads
+those files, streams headers to extract titles, and supports the same
+`custom-title` mechanism that `/rename` uses inside Claude Code (an appended
+JSONL entry — `{"type":"custom-title","customTitle":"...","sessionId":"..."}`).
 
 If the current directory has no transcripts, `clh` walks up to parents until it
 finds one — useful when you ran Claude from a project root but are currently in
 a sub-directory.
+
+The interactive TUI also detects **sub-projects**: descendant directories that
+have their own transcripts. They appear at the top of the list; selecting one
+re-enters the TUI for that sub-directory.
+
+## Viewers
+
+- If [`glow`](https://github.com/charmbracelet/glow) is installed, transcripts
+  are rendered as Markdown and piped to `glow -p`.
+- Otherwise transcripts are styled with ANSI escapes and piped to `$PAGER`
+  (or `less -R`).
+- `clh show <id> --raw` always uses the regular pager (raw JSON, not markdown).
+
+## Tests
+
+```bash
+npm test
+```
+
+Uses Node's built-in test runner — no extra dev dependency.
