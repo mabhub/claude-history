@@ -6,7 +6,7 @@ import pc from 'picocolors';
 import { listSessions, findSubProjects, findParentProjects, pathExists } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from './actions.mjs';
-import { pipeToViewer, hasGlow, formatDate } from './util.mjs';
+import { pipeToViewer, hasGlow, formatDate, MISSING } from './util.mjs';
 
 /**
  * Sentinel returned by selectQuittable when the user pressed `q`.
@@ -45,6 +45,13 @@ const selectQuittable = async config => {
   }
 };
 
+// Visual vocabulary used in the TUI:
+//   ● green   custom title set via /rename
+//   ● yellow  AI-generated title
+//   ○ dim     fallback to the first user prompt
+//   ▲ magenta navigation into a parent project
+//   ▸ cyan    navigation into a sub-project
+//   ⚠ red     missing cwd (see MISSING in util.mjs)
 const TITLE_SOURCE_BADGES = {
   custom: pc.green('●'),
   ai: pc.yellow('●'),
@@ -63,26 +70,30 @@ const NAV_PREFIX = 'nav:';
 /**
  * Run the interactive TUI. Loops until the user quits or chooses to descend
  * into a sub-project (then re-enters itself with the new directory).
+ * When `cwd` is null (orphan history), no FS scan is attempted — the view
+ * is read-only against the encoded projects dir.
  * @param {Object} options
  * @param {string} options.dir - Claude projects directory for the cwd
- * @param {string} options.cwd - Resolved working directory
+ * @param {string|null} options.cwd - Resolved working directory, or null when orphan
+ * @param {string} [options.displayLabel] - Override label shown in header (defaults to cwd)
  * @param {boolean} options.walkedUp - Whether we walked up to find sessions
  * @returns {Promise<void>}
  */
-export const runInteractive = async ({ dir, cwd, walkedUp }) => {
+export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
   while (true) {
     const [sessions, subProjects, parentProjects, cwdMissing] = await Promise.all([
       dir ? listSessions(dir) : Promise.resolve([]),
-      findSubProjects(cwd),
-      findParentProjects(cwd),
-      pathExists(cwd).then(ok => !ok),
+      cwd ? findSubProjects(cwd) : Promise.resolve([]),
+      cwd ? findParentProjects(cwd) : Promise.resolve([]),
+      cwd ? pathExists(cwd).then(ok => !ok) : Promise.resolve(true),
     ]);
     if (sessions.length === 0 && subProjects.length === 0 && parentProjects.length === 0) {
       console.log(pc.yellow('Aucune conversation dans ce dossier.'));
       return;
     }
 
-    printHeader({ cwd, walkedUp, sessionCount: sessions.length, cwdMissing });
+    const headerLabel = displayLabel ?? cwd;
+    printHeader({ label: headerLabel, walkedUp, sessionCount: sessions.length, cwdMissing });
 
     const pageSize = Math.max(5, (process.stdout.rows ?? 20) - 6);
     const choices = buildChoices({ sessions, subProjects, parentProjects });
@@ -96,9 +107,14 @@ export const runInteractive = async ({ dir, cwd, walkedUp }) => {
     if (choice === null || choice === QUIT || choice === QUIT_VALUE) return;
 
     if (choice.startsWith(NAV_PREFIX)) {
-      const targetCwd = choice.slice(NAV_PREFIX.length);
-      const target = [...parentProjects, ...subProjects].find(p => p.cwd === targetCwd);
-      await runInteractive({ dir: target.dir, cwd: target.cwd, walkedUp: false });
+      const targetDir = choice.slice(NAV_PREFIX.length);
+      const target = [...parentProjects, ...subProjects].find(p => p.dir === targetDir);
+      await runInteractive({
+        dir: target.dir,
+        cwd: target.cwd,
+        displayLabel: target.displayLabel,
+        walkedUp: false,
+      });
       return;
     }
 
@@ -110,15 +126,24 @@ export const runInteractive = async ({ dir, cwd, walkedUp }) => {
   }
 };
 
-const MISSING_BADGE = pc.red('⚠');
-const MISSING_LABEL = pc.red('(dossier supprimé)');
-
-const printHeader = ({ cwd, walkedUp, sessionCount, cwdMissing }) => {
+const printHeader = ({ label, walkedUp, sessionCount, cwdMissing }) => {
   const suffix = walkedUp ? pc.dim(` (remonté depuis ${process.cwd()})`) : '';
-  const missing = cwdMissing ? `  ${MISSING_BADGE} ${MISSING_LABEL}` : '';
-  console.log(`\nConversations dans ${pc.bold(cwd)}${suffix}  ${pc.dim(`(${sessionCount})`)}${missing}`);
+  const missing = cwdMissing ? `  ${MISSING.badge} ${MISSING.label}` : '';
+  console.log(`\nConversations dans ${pc.bold(label)}${suffix}  ${pc.dim(`(${sessionCount})`)}${missing}`);
   console.log(pc.dim(`Légende : ${LEGEND}  ·  q pour quitter`));
   console.log('');
+};
+
+const formatNavChoice = ({ entry, icon, displayPath }) => {
+  const arrow = entry.missing ? MISSING.badge : icon;
+  const label = entry.missing
+    ? pc.strikethrough(displayPath)
+    : pc.bold(displayPath);
+  const suffix = entry.missing ? `  ${MISSING.label}` : '';
+  return {
+    name: `${arrow} ${label}  ${pc.dim(`(${entry.sessionCount} conversations)`)}${suffix}`,
+    value: `${NAV_PREFIX}${entry.dir}`,
+  };
 };
 
 const buildChoices = ({ sessions, subProjects, parentProjects }) => {
@@ -126,26 +151,22 @@ const buildChoices = ({ sessions, subProjects, parentProjects }) => {
   if (parentProjects.length > 0) {
     choices.push(new Separator(pc.dim('— Dossiers parents avec historique —')));
     for (const parent of parentProjects) {
-      const arrow = parent.missing ? MISSING_BADGE : pc.magenta('▲');
-      const label = parent.missing ? pc.strikethrough(parent.cwd) : pc.bold(parent.cwd);
-      const suffix = parent.missing ? `  ${MISSING_LABEL}` : '';
-      choices.push({
-        name: `${arrow} ${label}  ${pc.dim(`(${parent.sessionCount} conversations)`)}${suffix}`,
-        value: `${NAV_PREFIX}${parent.cwd}`,
-      });
+      choices.push(formatNavChoice({
+        entry: parent,
+        icon: pc.magenta('▲'),
+        displayPath: parent.displayLabel,
+      }));
     }
   }
   if (subProjects.length > 0) {
     choices.push(new Separator(pc.dim('— Sous-dossiers avec historique —')));
     for (const sub of subProjects) {
-      const arrow = sub.missing ? MISSING_BADGE : pc.cyan('▸');
-      const display = sub.missing ? sub.cwd : relativePath(sub.cwd);
-      const label = sub.missing ? pc.strikethrough(display) : pc.bold(display);
-      const suffix = sub.missing ? `  ${MISSING_LABEL}` : '';
-      choices.push({
-        name: `${arrow} ${label}  ${pc.dim(`(${sub.sessionCount} conversations)`)}${suffix}`,
-        value: `${NAV_PREFIX}${sub.cwd}`,
-      });
+      const displayPath = sub.missing ? sub.displayLabel : relativePath(sub.displayLabel);
+      choices.push(formatNavChoice({
+        entry: sub,
+        icon: pc.cyan('▸'),
+        displayPath,
+      }));
     }
   }
   if ((parentProjects.length > 0 || subProjects.length > 0) && sessions.length > 0) {
@@ -159,10 +180,10 @@ const buildChoices = ({ sessions, subProjects, parentProjects }) => {
   return choices;
 };
 
-const relativePath = subCwd => {
+const relativePath = absPath => {
   const cwd = process.cwd();
-  if (subCwd.startsWith(`${cwd}/`)) return `./${subCwd.slice(cwd.length + 1)}`;
-  return subCwd;
+  if (absPath.startsWith(`${cwd}/`)) return `./${absPath.slice(cwd.length + 1)}`;
+  return absPath;
 };
 
 const formatChoice = s => {
