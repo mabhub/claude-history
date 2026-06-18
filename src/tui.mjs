@@ -3,7 +3,7 @@ import select, { Separator } from '@inquirer/select';
 import input from '@inquirer/input';
 import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
-import { listSessions, findSubProjects } from './discover.mjs';
+import { listSessions, findSubProjects, findParentProjects } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from './actions.mjs';
 import { pipeToViewer, hasGlow, formatDate } from './util.mjs';
@@ -58,7 +58,7 @@ const LEGEND = [
 ].join(pc.dim(' · '));
 
 const QUIT_VALUE = '__quit__';
-const SUB_PREFIX = 'sub:';
+const NAV_PREFIX = 'nav:';
 
 /**
  * Run the interactive TUI. Loops until the user quits or chooses to descend
@@ -71,11 +71,12 @@ const SUB_PREFIX = 'sub:';
  */
 export const runInteractive = async ({ dir, cwd, walkedUp }) => {
   while (true) {
-    const [sessions, subProjects] = await Promise.all([
+    const [sessions, subProjects, parentProjects] = await Promise.all([
       dir ? listSessions(dir) : Promise.resolve([]),
       findSubProjects(cwd),
+      findParentProjects(cwd),
     ]);
-    if (sessions.length === 0 && subProjects.length === 0) {
+    if (sessions.length === 0 && subProjects.length === 0 && parentProjects.length === 0) {
       console.log(pc.yellow('Aucune conversation dans ce dossier.'));
       return;
     }
@@ -83,7 +84,7 @@ export const runInteractive = async ({ dir, cwd, walkedUp }) => {
     printHeader({ cwd, walkedUp, sessionCount: sessions.length });
 
     const pageSize = Math.max(5, (process.stdout.rows ?? 20) - 6);
-    const choices = buildChoices({ sessions, subProjects });
+    const choices = buildChoices({ sessions, subProjects, parentProjects });
 
     const choice = await selectQuittable({
       message: 'Choisir une conversation',
@@ -93,10 +94,10 @@ export const runInteractive = async ({ dir, cwd, walkedUp }) => {
 
     if (choice === null || choice === QUIT || choice === QUIT_VALUE) return;
 
-    if (choice.startsWith(SUB_PREFIX)) {
-      const subCwd = choice.slice(SUB_PREFIX.length);
-      const sub = subProjects.find(s => s.cwd === subCwd);
-      await runInteractive({ dir: sub.dir, cwd: sub.cwd, walkedUp: false });
+    if (choice.startsWith(NAV_PREFIX)) {
+      const targetCwd = choice.slice(NAV_PREFIX.length);
+      const target = [...parentProjects, ...subProjects].find(p => p.cwd === targetCwd);
+      await runInteractive({ dir: target.dir, cwd: target.cwd, walkedUp: false });
       return;
     }
 
@@ -115,17 +116,27 @@ const printHeader = ({ cwd, walkedUp, sessionCount }) => {
   console.log('');
 };
 
-const buildChoices = ({ sessions, subProjects }) => {
+const buildChoices = ({ sessions, subProjects, parentProjects }) => {
   const choices = [];
+  if (parentProjects.length > 0) {
+    choices.push(new Separator(pc.dim('— Dossiers parents avec historique —')));
+    for (const parent of parentProjects) {
+      choices.push({
+        name: `${pc.magenta('▲')} ${pc.bold(parent.cwd)}  ${pc.dim(`(${parent.sessionCount} conversations)`)}`,
+        value: `${NAV_PREFIX}${parent.cwd}`,
+      });
+    }
+  }
   if (subProjects.length > 0) {
     choices.push(new Separator(pc.dim('— Sous-dossiers avec historique —')));
     for (const sub of subProjects) {
-      const rel = relativePath(sub.cwd);
       choices.push({
-        name: `${pc.cyan('▸')} ${pc.bold(rel)}  ${pc.dim(`(${sub.sessionCount} conversations)`)}`,
-        value: `${SUB_PREFIX}${sub.cwd}`,
+        name: `${pc.cyan('▸')} ${pc.bold(relativePath(sub.cwd))}  ${pc.dim(`(${sub.sessionCount} conversations)`)}`,
+        value: `${NAV_PREFIX}${sub.cwd}`,
       });
     }
+  }
+  if ((parentProjects.length > 0 || subProjects.length > 0) && sessions.length > 0) {
     choices.push(new Separator(pc.dim('— Conversations du dossier courant —')));
   }
   for (const s of sessions) {

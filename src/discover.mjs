@@ -118,6 +118,29 @@ const safeListIds = async dir => {
 };
 
 /**
+ * Find ancestor directories of `cwd` that have their own Claude Code
+ * transcripts. Walks up to the filesystem root, returning every parent
+ * with at least one .jsonl file (excluding `cwd` itself).
+ * @param {string} cwd - Absolute path to start from
+ * @returns {Promise<Array<{cwd: string, dir: string, sessionCount: number}>>}
+ */
+export const findParentProjects = async cwd => {
+  const parents = [];
+  let current = path.dirname(path.resolve(cwd));
+  while (true) {
+    const dir = projectsDirFor(current);
+    const ids = await safeListIds(dir);
+    if (ids.length > 0) {
+      parents.push({ cwd: current, dir, sessionCount: ids.length });
+    }
+    const next = path.dirname(current);
+    if (next === current) break;
+    current = next;
+  }
+  return parents;
+};
+
+/**
  * Cheap listing of session ids in a directory (no JSONL parsing).
  * Use this when you only need to resolve an id prefix or check existence.
  * @param {string} dir - Claude projects directory
