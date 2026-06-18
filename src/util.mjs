@@ -4,11 +4,14 @@ import { spawn } from 'node:child_process';
 
 /**
  * Encode a working directory path the same way Claude Code does:
- * replace every '/' with '-'. Example: '/home/you/claude' -> '-home-you-claude'.
+ * every character outside [a-zA-Z0-9] is replaced by '-'. Examples:
+ *   '/home/you/claude'        -> '-home-you-claude'
+ *   '/home/you/.config/foo'   -> '-home-you--config-foo'
+ *   '/home/you/Santé/2026'    -> '-home-you-Sant--2026'
  * @param {string} cwd - Absolute working directory path
  * @returns {string} Encoded directory name used under ~/.claude/projects/
  */
-export const encodeCwd = cwd => cwd.replaceAll('/', '-');
+export const encodeCwd = cwd => cwd.replaceAll(/[^a-zA-Z0-9]/g, '-');
 
 /**
  * Returns the absolute path of the Claude Code projects directory for a given cwd.
@@ -43,25 +46,25 @@ export const truncate = (s, max) => {
 };
 
 /**
- * Resolve a short or full session id against the list of available sessions.
+ * Resolve a short or full session id against a list of candidate session ids.
  * Returns the matching full session id or throws if zero / multiple matches.
  * @param {string} idOrPrefix - Short prefix (>=4 chars) or full UUID
- * @param {Array<{sessionId: string}>} sessions - Candidate sessions
+ * @param {Array<string>} sessionIds - Candidate full session ids
  * @returns {string} Full session id
  */
-export const resolveId = (idOrPrefix, sessions) => {
+export const resolveId = (idOrPrefix, sessionIds) => {
   if (!idOrPrefix || idOrPrefix.length < 4) {
     throw new Error('Identifier too short (need at least 4 characters).');
   }
-  const matches = sessions.filter(s => s.sessionId.startsWith(idOrPrefix));
+  const matches = sessionIds.filter(id => id.startsWith(idOrPrefix));
   if (matches.length === 0) {
     throw new Error(`No conversation matches id "${idOrPrefix}".`);
   }
   if (matches.length > 1) {
-    const list = matches.map(m => m.sessionId.slice(0, 8)).join(', ');
+    const list = matches.map(id => id.slice(0, 8)).join(', ');
     throw new Error(`Ambiguous id "${idOrPrefix}" (matches: ${list}). Use a longer prefix.`);
   }
-  return matches[0].sessionId;
+  return matches[0];
 };
 
 /**
@@ -76,7 +79,6 @@ export const pipeToPager = text =>
     const [cmd, ...args] = pagerEnv ? pagerEnv.split(/\s+/) : ['less', '-R'];
     const child = spawn(cmd, args, { stdio: ['pipe', 'inherit', 'inherit'] });
     child.on('error', err => {
-      // Fallback: just print to stdout.
       if (err.code === 'ENOENT') {
         process.stdout.write(text);
         resolve();
@@ -85,6 +87,8 @@ export const pipeToPager = text =>
       }
     });
     child.on('close', () => resolve());
-    child.stdin.on('error', () => {});
+    child.stdin.on('error', err => {
+      if (err.code !== 'EPIPE') reject(err);
+    });
     child.stdin.end(text);
   });
