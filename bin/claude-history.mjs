@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { program } from 'commander';
-import { confirm } from '@inquirer/prompts';
+import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
 import { findProjectDir, listSessions, listSessionIds } from '../src/discover.mjs';
 import { renderTranscript } from '../src/transcript.mjs';

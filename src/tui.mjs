@@ -1,4 +1,6 @@
-import { select, input, confirm } from '@inquirer/prompts';
+import select from '@inquirer/select';
+import input from '@inquirer/input';
+import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
 import { listSessions } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
