@@ -1,8 +1,9 @@
 #!/usr/bin/env node
+import path from 'node:path';
 import { program } from 'commander';
 import { confirm } from '@inquirer/prompts';
 import pc from 'picocolors';
-import { findProjectDir, listSessions } from '../src/discover.mjs';
+import { findProjectDir, listSessions, listSessionIds } from '../src/discover.mjs';
 import { renderTranscript } from '../src/transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from '../src/actions.mjs';
 import { runInteractive } from '../src/tui.mjs';
@@ -27,6 +28,18 @@ const resolveProject = async () => {
   return found;
 };
 
+/**
+ * Resolve an id prefix to a full session, using only readdir (no JSONL parse).
+ * @param {string} idOrPrefix - Short prefix or full UUID
+ * @returns {Promise<{sessionId: string, filePath: string, dir: string}>}
+ */
+const resolveSession = async idOrPrefix => {
+  const { dir } = await resolveProject();
+  const ids = await listSessionIds(dir);
+  const sessionId = resolveId(idOrPrefix, ids);
+  return { sessionId, filePath: path.join(dir, `${sessionId}.jsonl`), dir };
+};
+
 const cmdLs = async () => {
   const { dir, cwd, walkedUp } = await resolveProject();
   const sessions = await listSessions(dir);
@@ -43,16 +56,13 @@ const cmdLs = async () => {
 };
 
 const cmdShow = async (idOrPrefix, opts) => {
-  const { dir } = await resolveProject();
-  const sessions = await listSessions(dir);
-  const sessionId = resolveId(idOrPrefix, sessions);
-  const session = sessions.find(s => s.sessionId === sessionId);
+  const { filePath } = await resolveSession(idOrPrefix);
   const text = await renderTranscript({
-    filePath: session.filePath,
+    filePath,
     raw: Boolean(opts.raw),
     verbose: Boolean(opts.verbose),
   });
-  if (opts.noPager) {
+  if (opts.pager === false) {
     process.stdout.write(text);
   } else {
     await pipeToPager(text);
@@ -60,26 +70,16 @@ const cmdShow = async (idOrPrefix, opts) => {
 };
 
 const cmdRename = async (idOrPrefix, title) => {
-  const { dir } = await resolveProject();
-  const sessions = await listSessions(dir);
-  const sessionId = resolveId(idOrPrefix, sessions);
-  const session = sessions.find(s => s.sessionId === sessionId);
-  await renameSession({
-    filePath: session.filePath,
-    sessionId,
-    title,
-  });
+  const { sessionId, filePath } = await resolveSession(idOrPrefix);
+  await renameSession({ filePath, sessionId, title });
   console.log(pc.green(`✓ ${sessionId.slice(0, 8)} renommé en "${title}"`));
 };
 
 const cmdRm = async (idOrPrefix, opts) => {
-  const { dir } = await resolveProject();
-  const sessions = await listSessions(dir);
-  const sessionId = resolveId(idOrPrefix, sessions);
-  const session = sessions.find(s => s.sessionId === sessionId);
+  const { sessionId, filePath } = await resolveSession(idOrPrefix);
   if (!opts.yes) {
     const ok = await confirm({
-      message: `Supprimer définitivement "${session.title}" (${sessionId.slice(0, 8)}) ?`,
+      message: `Supprimer définitivement ${sessionId.slice(0, 8)} ?`,
       default: false,
     }).catch(() => false);
     if (!ok) {
@@ -87,17 +87,12 @@ const cmdRm = async (idOrPrefix, opts) => {
       return;
     }
   }
-  const { removedDir } = await deleteSession({
-    filePath: session.filePath,
-    sessionId,
-  });
+  const { removedDir } = await deleteSession({ filePath, sessionId });
   console.log(pc.green(`✓ Supprimé${removedDir ? ' (+ dossier associé)' : ''}`));
 };
 
 const cmdResume = async idOrPrefix => {
-  const { dir } = await resolveProject();
-  const sessions = await listSessions(dir);
-  const sessionId = resolveId(idOrPrefix, sessions);
+  const { sessionId } = await resolveSession(idOrPrefix);
   await resumeSession(sessionId);
 };
 
@@ -135,11 +130,10 @@ program
   .description('Run `claude --resume <sessionId>`.')
   .action(cmdResume);
 
-program
-  .action(async () => {
-    const project = await resolveProject();
-    await runInteractive(project);
-  });
+program.action(async () => {
+  const project = await resolveProject();
+  await runInteractive(project);
+});
 
 program.parseAsync(process.argv).catch(err => {
   console.error(pc.red(err.message ?? String(err)));
