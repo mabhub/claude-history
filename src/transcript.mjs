@@ -81,10 +81,11 @@ const LOCAL_COMMAND_PATTERNS = [
 
 /**
  * Strip Claude Code's internal slash-command XML wrappers from user text.
+ * Exported for testing.
  * @param {string} text - Raw user text
  * @returns {string} Cleaned text (may be empty)
  */
-const cleanUserText = text =>
+export const cleanUserText = text =>
   LOCAL_COMMAND_PATTERNS.reduce((acc, [re, repl]) => acc.replaceAll(re, repl), text).trim();
 
 const renderUser = (entry, ts) => {
