@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathExists, findSubProjects, findParentProjects } from './discover.mjs';
+import { pathExists, findSubProjects, findParentProjects, findSessionGlobally } from './discover.mjs';
 import { encodeCwd } from './util.mjs';
 
 test('pathExists: true for a real directory', async () => {
@@ -133,6 +133,58 @@ test('findSubProjects: returns [] when projectsRoot does not exist', async () =>
     projectsRoot: path.join(os.tmpdir(), `clh-missing-${Date.now()}`),
   });
   assert.deepEqual(subs, []);
+});
+
+test('findSessionGlobally: finds a session living in another project', async () => {
+  const { workCwd, projectsRoot, cleanup } = await makeFixture();
+  try {
+    const otherCwd = path.join(workCwd, 'other');
+    const encoded = encodeCwd(otherCwd);
+    const id = 'b6eb23f1-9b8a-41b7-8ddd-8d525042f1b5';
+    await writeTranscript(path.join(projectsRoot, encoded), id);
+
+    const matches = await findSessionGlobally('b6eb23f1', { projectsRoot });
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].sessionId, id);
+    assert.equal(matches[0].encodedDir, encoded);
+    assert.equal(matches[0].dir, path.join(projectsRoot, encoded));
+  } finally {
+    await cleanup();
+  }
+});
+
+test('findSessionGlobally: returns [] when no project holds the prefix', async () => {
+  const { projectsRoot, cleanup } = await makeFixture();
+  try {
+    await writeTranscript(path.join(projectsRoot, '-some-proj'), 'aaaa1111-2222-3333-4444-555555555555');
+    const matches = await findSessionGlobally('zzzz', { projectsRoot });
+    assert.deepEqual(matches, []);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('findSessionGlobally: surfaces matches from distinct projects for the ambiguity check', async () => {
+  const { projectsRoot, cleanup } = await makeFixture();
+  try {
+    // Same 8-char prefix, two different projects → caller must treat as ambiguous.
+    await writeTranscript(path.join(projectsRoot, '-proj-a'), 'deadbeef-1111-1111-1111-111111111111');
+    await writeTranscript(path.join(projectsRoot, '-proj-b'), 'deadbeef-2222-2222-2222-222222222222');
+
+    const matches = await findSessionGlobally('deadbeef', { projectsRoot });
+    assert.equal(matches.length, 2);
+    const dirs = matches.map(m => m.encodedDir).toSorted();
+    assert.deepEqual(dirs, ['-proj-a', '-proj-b']);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('findSessionGlobally: returns [] when projectsRoot does not exist', async () => {
+  const matches = await findSessionGlobally('abcd', {
+    projectsRoot: path.join(os.tmpdir(), `clh-missing-${Date.now()}`),
+  });
+  assert.deepEqual(matches, []);
 });
 
 test('findParentProjects: includes existing ancestor with transcripts, missing=false', async () => {

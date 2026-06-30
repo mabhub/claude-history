@@ -197,6 +197,38 @@ export const findParentProjects = async (cwd, { projectsRoot = defaultProjectsRo
 };
 
 /**
+ * Search every project directory under `projectsRoot` for sessions whose id
+ * starts with `idOrPrefix`. Unlike `resolveId`, this is filesystem-wide: it is
+ * the fallback used when an id is not found in the current project. Each match
+ * carries its owning project `dir` plus an `encodedDir` label (the on-disk
+ * directory name) so callers can tell the user where the session actually lives
+ * — we can't reliably decode it back to a real cwd because `encodeCwd` is lossy.
+ * @param {string} idOrPrefix - Short prefix (>=4 chars) or full UUID
+ * @param {Object} [options]
+ * @param {string} [options.projectsRoot] - Override ~/.claude/projects (for tests)
+ * @returns {Promise<Array<{sessionId: string, dir: string, encodedDir: string}>>}
+ */
+export const findSessionGlobally = async (idOrPrefix, { projectsRoot = defaultProjectsRoot() } = {}) => {
+  let entries;
+  try {
+    entries = await fs.readdir(projectsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const projectDirs = entries.filter(e => e.isDirectory()).map(e => e.name);
+  const perProject = await Promise.all(
+    projectDirs.map(async encodedDir => {
+      const dir = path.join(projectsRoot, encodedDir);
+      const ids = await safeListIds(dir);
+      return ids
+        .filter(id => id.startsWith(idOrPrefix))
+        .map(sessionId => ({ sessionId, dir, encodedDir }));
+    }),
+  );
+  return perProject.flat();
+};
+
+/**
  * Cheap listing of session ids in a directory (no JSONL parsing).
  * Use this when you only need to resolve an id prefix or check existence.
  * @param {string} dir - Claude projects directory

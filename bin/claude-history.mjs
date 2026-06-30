@@ -3,7 +3,7 @@ import path from 'node:path';
 import { program } from 'commander';
 import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
-import { findProjectDir, listSessions, listSessionIds, findSubProjects, pathExists } from '../src/discover.mjs';
+import { findProjectDir, listSessions, listSessionIds, findSubProjects, findSessionGlobally, pathExists } from '../src/discover.mjs';
 import { renderTranscript } from '../src/transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from '../src/actions.mjs';
 import { runInteractive } from '../src/tui.mjs';
@@ -31,14 +31,75 @@ const resolveProject = async () => {
 
 /**
  * Resolve an id prefix to a full session, using only readdir (no JSONL parse).
+ * Looks in the current project first; if the id matches nothing locally, falls
+ * back to a filesystem-wide search under ~/.claude/projects. A local ambiguity
+ * is reported as-is (we never paper over it with a global match). When the
+ * session is found in another project, `foundElsewhere` is set so callers can
+ * warn (read-only ops) or confirm (destructive ops) before proceeding.
  * @param {string} idOrPrefix - Short prefix or full UUID
- * @returns {Promise<{sessionId: string, filePath: string, dir: string}>}
+ * @returns {Promise<{sessionId: string, filePath: string, dir: string, foundElsewhere: boolean, encodedDir: string|null}>}
  */
 const resolveSession = async idOrPrefix => {
   const { dir } = await resolveProject();
   const ids = await listSessionIds(dir);
-  const sessionId = resolveId(idOrPrefix, ids);
-  return { sessionId, filePath: path.join(dir, `${sessionId}.jsonl`), dir };
+  const localMatches = ids.filter(id => id.startsWith(idOrPrefix));
+
+  // Found locally (one match, or a local ambiguity we want to surface): delegate
+  // to resolveId for the canonical messages and short-circuit the global search.
+  if (localMatches.length >= 1) {
+    const sessionId = resolveId(idOrPrefix, ids);
+    return { sessionId, filePath: path.join(dir, `${sessionId}.jsonl`), dir, foundElsewhere: false, encodedDir: null };
+  }
+
+  // Not in the current project — search every project directory.
+  const global = await findSessionGlobally(idOrPrefix);
+  if (global.length === 0) {
+    // Reuse resolveId solely for its "no match" / "too short" wording.
+    resolveId(idOrPrefix, ids);
+  }
+  if (global.length > 1) {
+    const list = global
+      .map(m => `${m.sessionId.slice(0, 8)} (${m.encodedDir})`)
+      .join(', ');
+    throw new Error(`Ambiguous id "${idOrPrefix}" across projects (matches: ${list}). Use a longer prefix.`);
+  }
+  const { sessionId, dir: foundDir, encodedDir } = global[0];
+  return {
+    sessionId,
+    filePath: path.join(foundDir, `${sessionId}.jsonl`),
+    dir: foundDir,
+    foundElsewhere: true,
+    encodedDir,
+  };
+};
+
+/**
+ * Emit a stderr warning that an id was resolved outside the current project.
+ * Used by read-only commands (show, rename) that proceed without confirmation.
+ * @param {{encodedDir: string}} session - Resolved session carrying its project dir name
+ * @returns {void}
+ */
+const warnFoundElsewhere = session => {
+  console.error(pc.yellow(
+    `⚠ Aucune conversation avec cet id dans le projet courant — trouvée dans ${session.encodedDir}.`,
+  ));
+};
+
+/**
+ * Ask the user to confirm acting on a session that lives in another project.
+ * Used by destructive commands (rm, resume). Returns true to proceed.
+ * @param {{sessionId: string, encodedDir: string}} session - Resolved session
+ * @param {string} verb - Action label shown in the prompt (e.g. "Reprendre")
+ * @returns {Promise<boolean>}
+ */
+const confirmFoundElsewhere = async (session, verb) => {
+  console.error(pc.yellow(
+    `⚠ Aucune conversation avec cet id dans le projet courant — trouvée dans ${session.encodedDir}.`,
+  ));
+  return confirm({
+    message: `${verb} ${session.sessionId.slice(0, 8)} hors du projet courant ?`,
+    default: false,
+  }).catch(() => false);
 };
 
 const cmdLs = async () => {
@@ -61,7 +122,9 @@ const cmdLs = async () => {
 };
 
 const cmdShow = async (idOrPrefix, opts) => {
-  const { filePath } = await resolveSession(idOrPrefix);
+  const session = await resolveSession(idOrPrefix);
+  if (session.foundElsewhere) warnFoundElsewhere(session);
+  const { filePath } = session;
   const useMarkdown = !opts.raw && opts.pager !== false && hasGlow();
   const text = await renderTranscript({
     filePath,
@@ -77,13 +140,20 @@ const cmdShow = async (idOrPrefix, opts) => {
 };
 
 const cmdRename = async (idOrPrefix, title) => {
-  const { sessionId, filePath } = await resolveSession(idOrPrefix);
+  const session = await resolveSession(idOrPrefix);
+  if (session.foundElsewhere) warnFoundElsewhere(session);
+  const { sessionId, filePath } = session;
   await renameSession({ filePath, sessionId, title });
   console.log(pc.green(`✓ ${sessionId.slice(0, 8)} renommé en "${title}"`));
 };
 
 const cmdRm = async (idOrPrefix, opts) => {
-  const { sessionId, filePath } = await resolveSession(idOrPrefix);
+  const session = await resolveSession(idOrPrefix);
+  const { sessionId, filePath } = session;
+  if (session.foundElsewhere && !(await confirmFoundElsewhere(session, 'Supprimer'))) {
+    console.log(pc.dim('Annulé.'));
+    return;
+  }
   if (!opts.yes) {
     const ok = await confirm({
       message: `Supprimer définitivement ${sessionId.slice(0, 8)} ?`,
@@ -99,8 +169,12 @@ const cmdRm = async (idOrPrefix, opts) => {
 };
 
 const cmdResume = async idOrPrefix => {
-  const { sessionId } = await resolveSession(idOrPrefix);
-  await resumeSession(sessionId);
+  const session = await resolveSession(idOrPrefix);
+  if (session.foundElsewhere && !(await confirmFoundElsewhere(session, 'Reprendre'))) {
+    console.log(pc.dim('Annulé.'));
+    return;
+  }
+  await resumeSession(session.sessionId);
 };
 
 program
