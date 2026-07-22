@@ -5,7 +5,8 @@ import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
 import { listSessions, findSubProjects, findParentProjects, pathExists } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
-import { renameSession, deleteSession, resumeSession } from './actions.mjs';
+import { renameSession, deleteSession } from './actions.mjs';
+import { resumeWithCwdCheck } from './resume-flow.mjs';
 import { pipeToViewer, hasGlow, formatSessionRow, MISSING } from './util.mjs';
 
 /**
@@ -242,8 +243,10 @@ const deleteAction = async session => {
 };
 
 const resumeAction = async session => {
-  await resumeSession({ sessionId: session.sessionId, filePath: session.filePath });
-  return EXIT;
+  const outcome = await resumeWithCwdCheck({ sessionId: session.sessionId, filePath: session.filePath });
+  // 'unavailable' can't happen in the TUI (it implies a TTY). 'cancelled' or a
+  // failed mkdir returns to the list; a successful resume never returns here.
+  return outcome === 'cancelled' ? BACK : EXIT;
 };
 
 const ACTION_HANDLERS = {

@@ -5,7 +5,8 @@ import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
 import { findProjectDir, listSessions, listSessionIds, findSubProjects, findSessionGlobally, pathExists } from '../src/discover.mjs';
 import { renderTranscript } from '../src/transcript.mjs';
-import { renameSession, deleteSession, resumeSession } from '../src/actions.mjs';
+import { renameSession, deleteSession } from '../src/actions.mjs';
+import { resumeWithCwdCheck } from '../src/resume-flow.mjs';
 import { runInteractive } from '../src/tui.mjs';
 import { cmdSkills } from '../src/skills-command.mjs';
 import { pipeToViewer, hasGlow, formatSessionRow, resolveId, MISSING } from '../src/util.mjs';
@@ -176,7 +177,16 @@ const cmdResume = async idOrPrefix => {
     console.log(pc.dim('Annulé.'));
     return;
   }
-  await resumeSession({ sessionId: session.sessionId, filePath: session.filePath });
+  const outcome = await resumeWithCwdCheck({ sessionId: session.sessionId, filePath: session.filePath });
+  if (outcome === 'unavailable') {
+    console.error(pc.yellow(
+      '⚠ Dossier d\'origine introuvable et pas de terminal interactif.\n'
+      + `  Relancez « clh resume ${session.sessionId.slice(0, 8)} » en interactif pour choisir,\n`
+      + '  ou créez le dossier d\'origine manuellement.',
+    ));
+    process.exit(1);
+  }
+  if (outcome === 'cancelled') console.log(pc.dim('Annulé.'));
 };
 
 program
