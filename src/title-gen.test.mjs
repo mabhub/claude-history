@@ -1,9 +1,39 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTitlePrompt, cleanGeneratedTitle } from './title-gen.mjs';
+import { buildTitlePrompt, cleanGeneratedTitle, detectLanguage, buildSystemPrompt } from './title-gen.mjs';
 
 test('buildTitlePrompt: carries the context (instructions live in the system prompt)', () => {
   assert.equal(buildTitlePrompt('Refactor the auth module'), 'Refactor the auth module');
+});
+
+test('detectLanguage: French text detected as fr despite technical English terms', () => {
+  assert.equal(detectLanguage("Configuration d'un routeur de bordure Thread via ssh, avec diagnostic réseau"), 'fr');
+  assert.equal(detectLanguage('On nettoie l\'historique des commits du fork avant de pousser'), 'fr');
+});
+
+test('detectLanguage: English text detected as en', () => {
+  assert.equal(detectLanguage('Debugging a memory leak in the user session handler after the deploy'), 'en');
+  assert.equal(detectLanguage('The build is broken and the tests are failing on CI'), 'en');
+});
+
+test('detectLanguage: French "a" (has) and "on" do not count as English', () => {
+  assert.equal(detectLanguage('Le serveur a planté, on a relancé'), 'fr');
+});
+
+test('detectLanguage: counts accented words such as "où"', () => {
+  // Without "où" this is a 0–1 tie lost to "the".
+  assert.equal(detectLanguage('où the logs'), 'fr');
+});
+
+test('detectLanguage: defaults to fr when no function words match', () => {
+  // No detectable function words → default to French (the user's language).
+  assert.equal(detectLanguage('ssh deploy build'), 'fr');
+  assert.equal(detectLanguage(''), 'fr');
+});
+
+test('buildSystemPrompt: pins the requested language into the instruction', () => {
+  assert.match(buildSystemPrompt('fr'), /français/);
+  assert.match(buildSystemPrompt('en'), /anglais/);
 });
 
 test('cleanGeneratedTitle: takes the last non-empty line (the real answer)', () => {
