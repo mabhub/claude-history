@@ -47,8 +47,12 @@ clh rm <id>
 clh rm <id> -y
 
 # Resume
-clh resume <id>          # exec claude --resume <id>
+clh resume <id>          # exec claude --resume <id>, in the session's own cwd
 ```
+
+`resume` runs `claude --resume` in the directory the conversation was recorded
+in (read from the transcript), not wherever you launched `clh` — so resuming a
+sub-folder or another project's session still finds it.
 
 ## Skill usage analytics
 
