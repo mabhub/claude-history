@@ -14,9 +14,11 @@ import {
 import { toCsv, toJson, toTable, bar } from './skills-render.mjs';
 
 /**
- * Build a case-insensitive RegExp from a user-supplied `--skill` pattern.
- * A bare word is treated as a substring match; anything with regex
- * metacharacters is used as-is. Returns undefined when no pattern is given.
+ * Build a case-insensitive matcher from a user-supplied `--skill` pattern. The
+ * pattern is an ECMAScript regexp (a bare word matches as a substring, since it
+ * is a valid regexp on its own). If it is syntactically invalid — e.g. an
+ * unbalanced `[` — its metacharacters are escaped and it matches literally
+ * rather than throwing. Returns undefined when no pattern is given.
  * @param {string|undefined} pattern
  * @returns {RegExp|undefined}
  */

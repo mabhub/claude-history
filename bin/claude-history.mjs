@@ -223,7 +223,7 @@ program
   .option('--success', 'Taux de succès par skill + invocations invalides (Unknown skill)')
   .option('--cooccurrence', 'Paires de skills partageant une même session')
   .option('--by-project', 'Matrice skill × projet')
-  .option('--events', 'Dump du dataset brut normalisé (granularité maximale)')
+  .option('--events', 'Dump du dataset brut normalisé (granularité maximale ; CSV ou JSON, jamais en table)')
   .option('--bucket <unit>', 'Granularité temporelle : day|week|month', 'month')
   .option('--pivot', 'Pour --timeseries : matrice large (période × skill) au lieu du format long')
   .option('--channel <chan>', 'Filtrer le canal : tool|slash|all', 'all')
