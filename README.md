@@ -99,6 +99,10 @@ session and agent, within 5 s), keeping the richer tool event and tagging it
 `bothChannels`. Genuine user-typed `/skill` activations (no tool twin) are kept
 as real `slash` invocations. Pass `--no-dedupe` to see the raw, doubled log.
 
+The dual-logged activations stay visible: the summary shows a `both` column and
+`--events` a `bothChannels` field, so you can tell tool-driven runs (logged on
+both channels) from genuine user-typed `/skill` invocations.
+
 Plugin skills are logged with their namespace by the tool channel
 (`superpowers:brainstorming`) but as the bare directory name by the slash
 channel (`brainstorming`). Events carry the canonical `skill` (namespace

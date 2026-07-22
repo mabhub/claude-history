@@ -103,9 +103,9 @@ test('dedupe: does not mutate its input events (bothChannels stays off the origi
 
 // --- aggregations -----------------------------------------------------------
 
-test('summarize: groups on canonical skill, counts channels and subagents', () => {
+test('summarize: groups on canonical skill, counts channels, subagents and bothChannels', () => {
   const events = [
-    ev({ channel: 'tool', session: 's1' }),
+    ev({ channel: 'tool', session: 's1', bothChannels: true }),
     ev({ channel: 'slash', session: 's2', caller: null }),
     ev({ channel: 'tool', session: 's1', agent: 'subagent' }),
   ];
@@ -116,6 +116,7 @@ test('summarize: groups on canonical skill, counts channels and subagents', () =
   assert.equal(row.tool, 2);
   assert.equal(row.slash, 1);
   assert.equal(row.subagent, 1);
+  assert.equal(row.both, 1);
 });
 
 test('timeseriesLong: one row per (period, skill)', () => {

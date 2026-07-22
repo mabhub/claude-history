@@ -43,7 +43,7 @@ const emit = async (text, out) => {
 const viewSummary = (events, format) => {
   const rows = summarize(events);
   if (format === 'json') return toJson(rows);
-  if (format === 'csv') return toCsv(['skill', 'namespace', 'count', 'sessions', 'projects', 'success', 'error', 'unknown', 'tool', 'slash', 'subagent'], rows);
+  if (format === 'csv') return toCsv(['skill', 'namespace', 'count', 'sessions', 'projects', 'success', 'error', 'unknown', 'tool', 'slash', 'both', 'subagent'], rows);
   const max = rows[0]?.count ?? 0;
   const table = toTable(
     [
@@ -52,6 +52,7 @@ const viewSummary = (events, format) => {
       { key: 'projects', label: '#proj', align: 'right' },
       { key: 'tool', label: 'tool', align: 'right' },
       { key: 'slash', label: 'slash', align: 'right' },
+      { key: 'both', label: 'both', align: 'right' },
       { key: 'subagent', label: 'sub', align: 'right' },
       { key: 'error', label: 'err', align: 'right' },
       { key: 'skill', label: 'skill' },
@@ -161,7 +162,7 @@ const viewByProject = (events, format) => {
 const viewEvents = (events, format) => {
   if (format === 'json') return toJson(events);
   return toCsv(
-    ['ts', 'skill', 'skillRaw', 'namespace', 'channel', 'agent', 'status', 'errorKind', 'caller', 'session', 'project'],
+    ['ts', 'skill', 'skillRaw', 'namespace', 'channel', 'agent', 'status', 'errorKind', 'bothChannels', 'caller', 'session', 'project'],
     events,
   );
 };

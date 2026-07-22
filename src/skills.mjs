@@ -347,14 +347,14 @@ export const bucketOf = (ts, bucket) => {
  * Per-skill summary: invocation count, distinct sessions, distinct projects,
  * and a success/error/unknown breakdown. Sorted by total count desc.
  * @param {SkillEvent[]} events
- * @returns {Array<{skill: string, count: number, sessions: number, projects: number, success: number, error: number, unknown: number, slash: number, tool: number}>}
+ * @returns {Array<{skill: string, count: number, sessions: number, projects: number, success: number, error: number, unknown: number, slash: number, tool: number, both: number}>}
  */
 export const summarize = events => {
   const map = new Map();
   for (const e of events) {
     let s = map.get(e.skill);
     if (!s) {
-      s = { skill: e.skill, namespace: e.namespace, count: 0, sessions: new Set(), projects: new Set(), success: 0, error: 0, unknown: 0, slash: 0, tool: 0, subagent: 0 };
+      s = { skill: e.skill, namespace: e.namespace, count: 0, sessions: new Set(), projects: new Set(), success: 0, error: 0, unknown: 0, slash: 0, tool: 0, subagent: 0, both: 0 };
       map.set(e.skill, s);
     }
     s.count += 1;
@@ -363,6 +363,9 @@ export const summarize = events => {
     s[e.status] += 1;
     s[e.channel] += 1;
     if (e.agent === 'subagent') s.subagent += 1;
+    // A tool event tagged bothChannels absorbed a slash twin at dedupe time:
+    // the same activation was logged on both channels.
+    if (e.bothChannels) s.both += 1;
   }
   return [...map.values()]
     .map(s => ({ ...s, sessions: s.sessions.size, projects: s.projects.size }))
