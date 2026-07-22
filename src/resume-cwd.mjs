@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { encodeCwd } from './util.mjs';
+import { readSessionCwd, pathExists } from './discover.mjs';
 
 /**
  * Whether a directory entry is (or points to) a directory. Plain dirs are
@@ -80,4 +81,22 @@ export const deduceCwdFromEncoded = async (encodedDir, { fsRoot = '/' } = {}) =>
   const missingSuffix = rest;
   const guess = rest ? path.join(existingPrefix, naiveDecode(rest)) : existingPrefix;
   return { existingPrefix, missingSuffix, guess };
+};
+
+/**
+ * Classify the working directory a conversation should resume in.
+ * @param {string} filePath - Path to the session's .jsonl transcript
+ * @param {Object} [options]
+ * @param {string} [options.fsRoot='/'] - Root for FS deduction (injectable for tests)
+ * @returns {Promise<{status: 'ok'|'missing'|'unknown', recordedCwd: string|null, encodedDir: string, existingPrefix: string|null, missingSuffix: string|null, guess: string|null}>}
+ */
+export const resolveCwdState = async (filePath, { fsRoot = '/' } = {}) => {
+  const encodedDir = path.basename(path.dirname(filePath));
+  const recordedCwd = await readSessionCwd(filePath).catch(() => null);
+  if (recordedCwd) {
+    const status = (await pathExists(recordedCwd)) ? 'ok' : 'missing';
+    return { status, recordedCwd, encodedDir, existingPrefix: null, missingSuffix: null, guess: null };
+  }
+  const { existingPrefix, missingSuffix, guess } = await deduceCwdFromEncoded(encodedDir, { fsRoot });
+  return { status: 'unknown', recordedCwd: null, encodedDir, existingPrefix, missingSuffix, guess };
 };
