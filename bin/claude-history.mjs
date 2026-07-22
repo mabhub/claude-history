@@ -40,6 +40,11 @@ const resolveProject = async () => {
  * @returns {Promise<{sessionId: string, filePath: string, dir: string, foundElsewhere: boolean, encodedDir: string|null}>}
  */
 const resolveSession = async idOrPrefix => {
+  // Reject too-short ids up front so we never scan every project directory
+  // just to end up throwing on the length. resolveId enforces the same bound.
+  if (!idOrPrefix || idOrPrefix.length < 4) {
+    throw new Error('Identifier too short (need at least 4 characters).');
+  }
   const { dir } = await resolveProject();
   const ids = await listSessionIds(dir);
   const localMatches = ids.filter(id => id.startsWith(idOrPrefix));
