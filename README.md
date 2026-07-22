@@ -54,6 +54,12 @@ clh resume <id>          # exec claude --resume <id>, in the session's own cwd
 in (read from the transcript), not wherever you launched `clh` — so resuming a
 sub-folder or another project's session still finds it.
 
+If that original directory no longer exists, `clh` offers to recreate it
+(`mkdir -p`) so Claude can locate the session — Claude resolves a session id
+against the current directory, so it must run somewhere that maps back to the
+conversation's storage folder. Without a terminal (piped/scripted), `resume`
+prints guidance and exits non-zero rather than resuming in the wrong place.
+
 ## Skill usage analytics
 
 `clh skills` mines **every** transcript under `~/.claude/projects` (all
