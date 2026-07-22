@@ -312,6 +312,23 @@ const readHead = async filePath => {
 };
 
 /**
+ * Read just the first user prompt from a transcript head (no timestamp), for
+ * cheap fallback context when no away_summary is available.
+ * @param {string} filePath - Path to the .jsonl file
+ * @returns {Promise<string|null>} First user prompt text, or null
+ */
+export const readFirstUserPrompt = async filePath => {
+  let prompt = null;
+  await streamHeadEntries(filePath, entry => {
+    if (entry.type === 'user') {
+      prompt = extractUserText(entry);
+      return true;
+    }
+  });
+  return prompt;
+};
+
+/**
  * Read the tail of a .jsonl transcript (last TAIL_READ_BYTES) and extract the
  * latest custom-title / ai-title entries — both are always appended at the end
  * of the file by Claude Code.

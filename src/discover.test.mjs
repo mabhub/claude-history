@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathExists, findSubProjects, findParentProjects, findSessionGlobally, readSessionCwd } from './discover.mjs';
+import { pathExists, findSubProjects, findParentProjects, findSessionGlobally, readSessionCwd, readFirstUserPrompt } from './discover.mjs';
 import { encodeCwd } from './util.mjs';
 
 test('pathExists: true for a real directory', async () => {
@@ -42,6 +42,24 @@ test('readSessionCwd: returns null when no head entry carries a cwd', async () =
   const filePath = path.join(dir, 'abc.jsonl');
   await fs.writeFile(filePath, '{"type":"user"}\n{"type":"assistant"}\n', 'utf8');
   assert.equal(await readSessionCwd(filePath), null);
+});
+
+test('readFirstUserPrompt: returns the first user prompt from the head', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-fup-'));
+  const filePath = path.join(dir, 'sess.jsonl');
+  await fs.writeFile(
+    filePath,
+    `${JSON.stringify({ type: 'system' })}\n${JSON.stringify({ type: 'user', message: { content: 'hello there' } })}\n`,
+    'utf8',
+  );
+  assert.equal(await readFirstUserPrompt(filePath), 'hello there');
+});
+
+test('readFirstUserPrompt: returns null when no user entry in the head', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-fup-'));
+  const filePath = path.join(dir, 'sess.jsonl');
+  await fs.writeFile(filePath, `${JSON.stringify({ type: 'system' })}\n`, 'utf8');
+  assert.equal(await readFirstUserPrompt(filePath), null);
 });
 
 /**
