@@ -51,6 +51,37 @@ export const formatDate = input => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+// Relative-age thresholds in seconds, largest-first. The first bucket whose
+// `limit` the elapsed time is below decides the unit; `null` is the open-ended
+// top bucket (years). `div` converts seconds into that unit.
+const AGE_UNITS = [
+  { limit: 60, label: elapsed => (elapsed < 5 ? 'à l\'instant' : `il y a ${Math.floor(elapsed)}s`) },
+  { limit: 3600, label: elapsed => `il y a ${Math.floor(elapsed / 60)}min` },
+  { limit: 86400, label: elapsed => `il y a ${Math.floor(elapsed / 3600)}h` },
+  { limit: 604800, label: elapsed => `il y a ${Math.floor(elapsed / 86400)}j` },
+  { limit: 2592000, label: elapsed => `il y a ${Math.floor(elapsed / 604800)}sem` },
+  { limit: 31536000, label: elapsed => `il y a ${Math.floor(elapsed / 2592000)}mois` },
+  { limit: null, label: elapsed => `il y a ${Math.floor(elapsed / 31536000)}an${elapsed >= 63072000 ? 's' : ''}` },
+];
+
+/**
+ * Format a past date as a compact French relative age (e.g. "il y a 3j").
+ * Future or invalid dates fall back to "?". The reference point defaults to
+ * now but is injectable for deterministic tests.
+ * @param {Date|string|number} input - Date input (typically a session mtime)
+ * @param {number} [now=Date.now()] - Reference epoch in ms
+ * @returns {string} Relative age label
+ */
+export const formatAge = (input, now = Date.now()) => {
+  const d = input instanceof Date ? input : new Date(input);
+  const ms = d.getTime();
+  if (Number.isNaN(ms)) return '?';
+  const elapsed = (now - ms) / 1000;
+  if (elapsed < 0) return '?';
+  const bucket = AGE_UNITS.find(u => u.limit === null || elapsed < u.limit);
+  return bucket.label(elapsed);
+};
+
 /**
  * Format a byte count as a compact human-readable size (B, KB, MB, GB). Uses
  * 1024-based units and drops the decimal for whole numbers and for bytes.
@@ -77,6 +108,33 @@ export const formatSize = bytes => {
   const oneDp = Number(value.toFixed(1));
   const rounded = unit === 0 || Number.isInteger(oneDp) ? String(oneDp) : oneDp.toFixed(1);
   return `${rounded} ${units[unit]}`;
+};
+
+// Fixed display widths so age and size line up into columns across rows. The
+// raw (uncolored) strings are padded before coloring — ANSI codes would break
+// padEnd/padStart length math.
+const AGE_WIDTH = 13;
+const SIZE_WIDTH = 8;
+
+/**
+ * Render the shared columns of one session list row: short id, absolute date,
+ * relative age, size, then title. Used by both the `ls` command and the TUI so
+ * their columns stay identical. The caller prefixes any leading badge itself.
+ * @param {Object} session - A session from listSessions
+ * @param {string} session.sessionId - Full UUID
+ * @param {Date} session.mtime - Last-activity time (drives date + age)
+ * @param {number} session.size - Transcript byte size
+ * @param {string} session.title - Resolved title
+ * @param {number} [now=Date.now()] - Reference epoch for age (injectable for tests)
+ * @returns {string} A colored, column-aligned row (no leading badge)
+ */
+export const formatSessionRow = (session, now = Date.now()) => {
+  const id = pc.dim(session.sessionId.slice(0, 8));
+  const date = pc.cyan(formatDate(session.mtime));
+  const age = pc.dim(formatAge(session.mtime, now).padEnd(AGE_WIDTH));
+  const size = pc.dim(formatSize(session.size).padStart(SIZE_WIDTH));
+  const title = session.title === '(sans titre)' ? pc.dim(session.title) : session.title;
+  return `${id}  ${date}  ${age}  ${size}  ${title}`;
 };
 
 /**

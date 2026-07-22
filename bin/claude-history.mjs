@@ -8,7 +8,7 @@ import { renderTranscript } from '../src/transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from '../src/actions.mjs';
 import { runInteractive } from '../src/tui.mjs';
 import { cmdSkills } from '../src/skills-command.mjs';
-import { pipeToViewer, hasGlow, formatDate, resolveId, MISSING } from '../src/util.mjs';
+import { pipeToViewer, hasGlow, formatSessionRow, resolveId, MISSING } from '../src/util.mjs';
 
 /**
  * Resolve the project directory for the current cwd. Walks up to parents
@@ -119,10 +119,7 @@ const cmdLs = async () => {
   const missingSuffix = cwdMissing ? `  ${MISSING.badge} ${MISSING.label}` : '';
   console.log(pc.bold(`Conversations dans ${cwd} (${sessions.length}) :${missingSuffix}\n`));
   for (const s of sessions) {
-    const id = pc.dim(s.sessionId.slice(0, 8));
-    const date = pc.cyan(formatDate(s.mtime));
-    const title = s.title === '(sans titre)' ? pc.dim(s.title) : s.title;
-    console.log(`  ${id}  ${date}  ${title}`);
+    console.log(`  ${formatSessionRow(s)}`);
   }
 };
 

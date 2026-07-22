@@ -31,7 +31,7 @@ Provides two binaries: `claude-history` and the shorter `clh`.
 clh
 
 # List conversations for the cwd (walks up to parent if empty)
-clh ls
+clh ls                   # id · date · relative age · transcript size · title
 
 # Show a transcript (readable, piped to $PAGER)
 clh show <id>            # 8-char prefix or full UUID accepted

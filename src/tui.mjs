@@ -6,7 +6,7 @@ import pc from 'picocolors';
 import { listSessions, findSubProjects, findParentProjects, pathExists } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
 import { renameSession, deleteSession, resumeSession } from './actions.mjs';
-import { pipeToViewer, hasGlow, formatDate, MISSING } from './util.mjs';
+import { pipeToViewer, hasGlow, formatSessionRow, MISSING } from './util.mjs';
 
 /**
  * Sentinel returned by selectQuittable when the user pressed `q`.
@@ -187,11 +187,8 @@ const relativePath = absPath => {
 };
 
 const formatChoice = s => {
-  const idShort = pc.dim(s.sessionId.slice(0, 8));
-  const date = pc.cyan(formatDate(s.mtime));
-  const title = s.title === '(sans titre)' ? pc.dim(s.title) : s.title;
   const badge = TITLE_SOURCE_BADGES[s.titleSource] ?? pc.dim('○');
-  return `${badge} ${idShort}  ${date}  ${title}`;
+  return `${badge} ${formatSessionRow(s)}`;
 };
 
 // Action handlers return one of:

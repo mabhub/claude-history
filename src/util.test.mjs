@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeCwd, resolveId, truncate, formatDate, formatSize } from './util.mjs';
+import { encodeCwd, resolveId, truncate, formatDate, formatSize, formatAge, formatSessionRow } from './util.mjs';
 
 test('encodeCwd: replaces slashes', () => {
   assert.equal(encodeCwd('/home/you/claude'), '-home-you-claude');
@@ -81,6 +81,44 @@ test('formatSize: a value just under a threshold promotes to the next unit', () 
 test('formatSize: invalid input returns a placeholder', () => {
   assert.equal(formatSize(-1), '?');
   assert.equal(formatSize(NaN), '?');
+});
+
+test('formatAge: picks the right unit for each elapsed range', () => {
+  const now = Date.UTC(2026, 6, 22, 12, 0, 0);
+  const ago = seconds => new Date(now - seconds * 1000);
+  assert.equal(formatAge(ago(2), now), 'à l\'instant');
+  assert.equal(formatAge(ago(42), now), 'il y a 42s');
+  assert.equal(formatAge(ago(5 * 60), now), 'il y a 5min');
+  assert.equal(formatAge(ago(3 * 3600), now), 'il y a 3h');
+  assert.equal(formatAge(ago(2 * 86400), now), 'il y a 2j');
+  assert.equal(formatAge(ago(10 * 86400), now), 'il y a 1sem');
+  assert.equal(formatAge(ago(60 * 86400), now), 'il y a 2mois');
+  assert.equal(formatAge(ago(400 * 86400), now), 'il y a 1an');
+  assert.equal(formatAge(ago(800 * 86400), now), 'il y a 2ans');
+});
+
+test('formatAge: future or invalid dates return a placeholder', () => {
+  const now = Date.UTC(2026, 6, 22, 12, 0, 0);
+  assert.equal(formatAge(new Date(now + 5000), now), '?');
+  assert.equal(formatAge('not-a-date', now), '?');
+});
+
+test('formatSessionRow: includes id, date, age, size and title in order', () => {
+  const now = Date.UTC(2026, 6, 22, 12, 0, 0);
+  const row = formatSessionRow(
+    { sessionId: 'a1b2c3d4-eeee-ffff', mtime: new Date(now - 2 * 3600 * 1000), size: 3481, title: 'Mon titre' },
+    now,
+  );
+  // Assert on substrings so the check is agnostic to ANSI color codes.
+  assert.match(row, /a1b2c3d4/);
+  assert.match(row, /2026-07-22/);
+  assert.match(row, /il y a 2h/);
+  assert.match(row, /3\.4 KB/);
+  assert.match(row, /Mon titre/);
+  // Ordering: id before date before age before size before title.
+  const order = ['a1b2c3d4', '2026-07-22', 'il y a 2h', '3.4 KB', 'Mon titre']
+    .map(part => row.indexOf(part));
+  assert.deepEqual(order, [...order].toSorted((a, b) => a - b));
 });
 
 test('formatDate: ISO string', () => {
