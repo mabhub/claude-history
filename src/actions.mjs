@@ -24,6 +24,9 @@ export const renameSession = async ({ filePath, sessionId, title }) => {
 
 /**
  * Delete a session's .jsonl file and its companion directory (if any).
+ * `removedDir` reflects whether a companion directory actually existed and was
+ * removed — it stays false when there was none, so callers don't claim to have
+ * deleted a directory that never existed.
  * @param {Object} options
  * @param {string} options.filePath - Path to the .jsonl transcript
  * @param {string} options.sessionId - Full session UUID
@@ -32,14 +35,16 @@ export const renameSession = async ({ filePath, sessionId, title }) => {
 export const deleteSession = async ({ filePath, sessionId }) => {
   await fs.unlink(filePath);
   const companionDir = path.join(path.dirname(filePath), sessionId);
-  let removedDir = false;
   try {
-    await fs.rm(companionDir, { recursive: true, force: true });
-    removedDir = true;
-  } catch {
-    removedDir = false;
+    // `force: false` (default) makes rm reject with ENOENT when the companion
+    // dir is absent, letting us report an honest `removedDir`. Any other error
+    // (e.g. EACCES) is a real failure and propagates.
+    await fs.rm(companionDir, { recursive: true });
+    return { removedDir: true };
+  } catch (err) {
+    if (err.code === 'ENOENT') return { removedDir: false };
+    throw err;
   }
-  return { removedDir };
 };
 
 /**
