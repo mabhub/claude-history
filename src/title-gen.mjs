@@ -13,10 +13,12 @@ const DEFAULT_TIMEOUT_MS = 60000;
 // project CLAUDE.md / skills (see generateTitle's flags), which otherwise make
 // claude digress about the current repo instead of answering.
 const TITLE_SYSTEM_PROMPT = [
-  'Tu génères un titre court et descriptif pour le texte fourni.',
+  'Tu es un générateur de titres.',
+  'Ta réponse doit contenir EXACTEMENT une ligne : le titre lui-même.',
   'Contraintes : 3 à 10 mots, pas de ponctuation finale, pas de guillemets,',
-  'sans préfixe (pas de « Titre : »), sans explication, dans la langue du texte.',
-  'Réponds UNIQUEMENT par le titre lui-même, rien d\'autre.',
+  'dans la langue du texte.',
+  'N\'écris AUCUNE phrase avant ou après le titre :',
+  'pas de préambule, pas de « Titre : », pas d\'explication.',
 ].join(' ');
 
 /**
@@ -28,29 +30,25 @@ const TITLE_SYSTEM_PROMPT = [
  */
 export const buildTitlePrompt = context => context;
 
-// A leading "Titre :" / "Title:" preamble claude sometimes prepends, with or
-// without the actual title on the same line.
+// A leading "Titre :" / "Title:" preamble claude sometimes prepends on the
+// same line as the title.
 const PREAMBLE_RE = /^(?:titre|title)\s*:\s*/i;
 
 /**
- * Normalize `claude -p` stdout into a clean title. Walks the lines, strips a
- * "Titre :" / "Title:" preamble (whether it carries the title or sits on its
- * own line), and returns the first line that holds real content — trimmed, with
- * surrounding quotes and trailing sentence punctuation removed.
+ * Normalize `claude -p` stdout into a clean title. claude often prepends a
+ * chatty preamble ("Titre court demandé.", "Voici un titre :") on its own line
+ * before the real title, so we take the LAST non-empty line — empirically the
+ * actual answer, whether the output is one line or several. That line is then
+ * de-prefixed, unquoted, and stripped of trailing sentence punctuation.
  * @param {string} stdout - Raw stdout from claude
  * @returns {string} Cleaned title (may be empty)
  */
 export const cleanGeneratedTitle = stdout => {
-  for (const raw of stdout.split('\n')) {
-    const line = raw.trim();
-    if (!line) continue;
-    const deprefixed = line.replace(PREAMBLE_RE, '').trim();
-    if (!deprefixed) continue; // preamble-only line ("Titre :") — look further
-    // Strip a single layer of surrounding straight or French quotes.
-    const unquoted = deprefixed.replace(/^["'«»]\s*/, '').replace(/\s*["'«»]$/, '').trim();
-    return unquoted.replace(/[.!?…]+$/, '').trim();
-  }
-  return '';
+  const last = stdout.split('\n').map(l => l.trim()).filter(Boolean).at(-1) ?? '';
+  const deprefixed = last.replace(PREAMBLE_RE, '').trim();
+  // Strip a single layer of surrounding straight or French quotes.
+  const unquoted = deprefixed.replace(/^["'«»]\s*/, '').replace(/\s*["'«»]$/, '').trim();
+  return unquoted.replace(/[.!?…]+$/, '').trim();
 };
 
 /**
@@ -82,16 +80,23 @@ export const generateTitle = async (filePath, { timeoutMs = DEFAULT_TIMEOUT_MS, 
   const ctx = context ?? (await buildTitleContext(filePath));
   if (!ctx) throw new Error('Aucun contenu exploitable pour générer un titre.');
   const prompt = buildTitlePrompt(ctx);
-  // Run claude isolated from any project/user customization: a neutral cwd (so
-  // it doesn't detect this repo), no setting sources (no CLAUDE.md, skills or
-  // hooks), strict MCP (no servers), and the task pinned in --system-prompt.
-  // Without this, claude reads the current project's context and digresses
-  // instead of returning a bare title.
+  // Run claude isolated and lean for a one-shot, no-tools title:
+  //   - neutral cwd + no setting sources + strict MCP: don't pick up this repo's
+  //     CLAUDE.md / skills, which otherwise make claude digress about the project
+  //   - task pinned in --system-prompt
+  //   - --no-session-persistence: this throwaway run must not clutter the session
+  //     history (which clh itself lists)
+  //   - --max-turns 1 + --tools '': a single turn, no tool use — nothing to read
+  //     or act on, just answer. Bounds tokens and keeps it deterministic.
+  // (Default model kept: measured faster here than haiku for this short task.)
   const args = [
     '-p', prompt,
     '--system-prompt', TITLE_SYSTEM_PROMPT,
     '--setting-sources', '',
     '--strict-mcp-config',
+    '--no-session-persistence',
+    '--max-turns', '1',
+    '--tools', '',
   ];
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, { stdio: ['ignore', 'pipe', 'ignore'], cwd: os.tmpdir() });
