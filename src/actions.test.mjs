@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { renameSession, deleteSession } from './actions.mjs';
+import { renameSession, deleteSession, ensureDir } from './actions.mjs';
 
 const mkTmp = () => fs.mkdtemp(path.join(os.tmpdir(), 'clh-actions-'));
 
@@ -45,6 +45,19 @@ test('deleteSession: reports removedDir=false when there was no companion dir', 
   const { removedDir } = await deleteSession({ filePath, sessionId: 'abc' });
   assert.equal(removedDir, false);
   assert.equal(await exists(filePath), false);
+});
+
+test('ensureDir: creates a directory recursively', async () => {
+  const dir = await mkTmp();
+  const target = path.join(dir, 'a', 'b', 'c');
+  await ensureDir(target);
+  assert.equal(await exists(target), true);
+});
+
+test('ensureDir: is idempotent on an existing directory', async () => {
+  const dir = await mkTmp();
+  await ensureDir(dir); // already exists
+  assert.equal(await exists(dir), true);
 });
 
 /** Whether a path exists on disk. */

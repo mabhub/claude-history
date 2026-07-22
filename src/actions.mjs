@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { readSessionCwd, pathExists } from './discover.mjs';
 
 /**
  * Append a custom-title entry to the session's .jsonl file.
@@ -49,31 +48,30 @@ export const deleteSession = async ({ filePath, sessionId }) => {
 };
 
 /**
- * Spawn `claude --resume <sessionId>` with inherited stdio, then exit with
- * the child's exit code. Runs the child in the conversation's own working
- * directory (read from the transcript) rather than wherever `clh` was invoked
- * — Claude Code resolves a session id against the cwd, so resuming a sub-folder
- * or cross-project session from elsewhere would otherwise fail to find it.
- *
- * The recorded cwd may no longer exist (deleted/moved project). In that case we
- * fall back to the current directory rather than passing a missing cwd to
- * spawn, which would fail with a misleading `spawn claude ENOENT` — making it
- * look like the `claude` binary is missing when it's the old cwd that's gone.
+ * Ensure a directory exists, creating parents as needed (mkdir -p).
+ * @param {string} dir - Absolute directory path
+ * @returns {Promise<void>}
+ */
+export const ensureDir = async dir => {
+  await fs.mkdir(dir, { recursive: true });
+};
+
+/**
+ * Spawn `claude --resume <sessionId>` with inherited stdio, then exit with the
+ * child's exit code. Runs the child in `cwd` when provided — the caller is
+ * responsible for resolving and validating it, because Claude Code resolves a
+ * session id against the working directory. A null cwd resumes from wherever
+ * the process currently is.
  * @param {Object} options
  * @param {string} options.sessionId - Full session UUID
- * @param {string} options.filePath - Path to the session's .jsonl transcript
+ * @param {string|null} options.cwd - Existing directory to run in, or null
  * @returns {Promise<never>} Process exits before resolving
  */
-export const resumeSession = async ({ sessionId, filePath }) => {
-  // Tolerate a transcript that vanished between listing and resume (race): a
-  // null cwd just means "resume from the current directory".
-  const recordedCwd = await readSessionCwd(filePath).catch(() => null);
-  const cwd = recordedCwd && (await pathExists(recordedCwd)) ? recordedCwd : null;
-  return new Promise((_resolve, reject) => {
+export const resumeSession = ({ sessionId, cwd }) =>
+  new Promise((_resolve, reject) => {
     const options = { stdio: 'inherit' };
     if (cwd) options.cwd = cwd;
     const child = spawn('claude', ['--resume', sessionId], options);
     child.on('error', reject);
     child.on('exit', code => process.exit(code ?? 0));
   });
-};
