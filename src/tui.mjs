@@ -7,7 +7,9 @@ import { listSessions, findSubProjects, findParentProjects, pathExists } from '.
 import { renderTranscript } from './transcript.mjs';
 import { renameSession, deleteSession } from './actions.mjs';
 import { resumeWithCwdCheck } from './resume-flow.mjs';
-import { pipeToViewer, hasGlow, formatSessionRow, MISSING } from './util.mjs';
+import { readLatestAwaySummary } from './away-summary.mjs';
+import { generateTitle } from './title-gen.mjs';
+import { pipeToViewer, hasGlow, formatSessionRow, truncate, MISSING } from './util.mjs';
 
 /**
  * Sentinel returned by selectQuittable when the user pressed `q`.
@@ -67,6 +69,31 @@ const LEGEND = [
 
 const QUIT_VALUE = '__quit__';
 const NAV_PREFIX = 'nav:';
+
+// Away-summary cache for the lifetime of the TUI process: sessionId → summary
+// (null once scanned and absent). Avoids rescanning a revisited session.
+const awayCache = new Map();
+
+/**
+ * Get a session's away_summary, memoized. Reads it once per session.
+ * @param {string} sessionId - Full session UUID
+ * @param {string} filePath - Path to the session's .jsonl transcript
+ * @returns {Promise<string|null>}
+ */
+const getAway = async (sessionId, filePath) => {
+  if (awayCache.has(sessionId)) return awayCache.get(sessionId);
+  const away = await readLatestAwaySummary(filePath);
+  awayCache.set(sessionId, away);
+  return away;
+};
+
+/** Sentinel: the away scan hasn't resolved yet (used to race it against a delay). */
+const PENDING = Symbol('pending');
+/** Resolve after `ms` with the PENDING sentinel. */
+const delayPending = ms => new Promise(resolve => { setTimeout(() => resolve(PENDING), ms); });
+
+const AWAY_ANNEX_MAX = 200;
+const AWAY_RACE_MS = 200;
 
 /**
  * Run the interactive TUI. Loops until the user quits or chooses to descend
@@ -211,7 +238,8 @@ const viewTranscript = async (session, { raw }) => {
   return STAY;
 };
 
-const renameAction = async session => {
+const renameAction = async (session, away) => {
+  if (away) console.log(pc.dim(`Résumé : ${truncate(away, AWAY_ANNEX_MAX)}`));
   const title = await input({
     message: 'Nouveau titre',
     default: session.titleSource === 'custom' ? session.title : '',
@@ -249,22 +277,105 @@ const resumeAction = async session => {
   return outcome === 'cancelled' ? BACK : EXIT;
 };
 
-const ACTION_HANDLERS = {
-  view: session => viewTranscript(session, { raw: false }),
-  'view-raw': session => viewTranscript(session, { raw: true }),
-  rename: renameAction,
-  delete: deleteAction,
-  resume: resumeAction,
+/**
+ * Ask Claude for a title (via generateTitle), then let the user accept, edit,
+ * regenerate, or cancel before it is written. `away` is the cached summary, if
+ * any, reused as context so no second scan happens.
+ * @param {Object} session - Session record
+ * @param {string|null} away - Cached away_summary, or null
+ * @returns {Promise<'submenu'>}
+ */
+const generateTitleAction = async (session, away) => {
+  const propose = async () => {
+    console.log(pc.dim('⏳ Génération du titre via Claude…'));
+    return generateTitle(session.filePath, { context: away ?? undefined });
+  };
+  let title;
+  try {
+    title = await propose();
+  } catch (err) {
+    console.error(pc.red(`⚠ Échec : ${err.message}`));
+    return STAY;
+  }
+  while (true) {
+    const choice = await selectQuittable({
+      message: `Titre proposé : ${pc.bold(title)}`,
+      choices: [
+        { name: 'Accepter', value: 'accept' },
+        { name: 'Éditer', value: 'edit' },
+        { name: 'Regénérer', value: 'regen' },
+        { name: pc.dim('Annuler'), value: 'cancel' },
+      ],
+    });
+    if (choice === 'accept') {
+      await renameSession({ filePath: session.filePath, sessionId: session.sessionId, title });
+      console.log(pc.green(`✓ Renommé: ${title}`));
+      return STAY;
+    }
+    if (choice === 'edit') {
+      const edited = await input({ message: 'Titre', default: title }).catch(handleCancel);
+      if (edited) {
+        await renameSession({ filePath: session.filePath, sessionId: session.sessionId, title: edited });
+        console.log(pc.green(`✓ Renommé: ${edited}`));
+      }
+      return STAY;
+    }
+    if (choice === 'regen') {
+      try {
+        title = await propose();
+      } catch (err) {
+        console.error(pc.red(`⚠ Échec : ${err.message}`));
+        return STAY;
+      }
+      continue;
+    }
+    return STAY; // cancel, QUIT, or null
+  }
+};
+
+/**
+ * Dispatch a menu action to its handler. Separated from the menu loop so the
+ * two away-aware handlers (rename, generate) receive the summary explicitly.
+ * @param {string} action - Selected menu value
+ * @param {Object} session - Session record
+ * @param {string|null} away - Cached away_summary, or null
+ * @returns {Promise<'submenu'|'list'|'exit'>}
+ */
+const runAction = (action, session, away) => {
+  if (action === 'view') return viewTranscript(session, { raw: false });
+  if (action === 'view-raw') return viewTranscript(session, { raw: true });
+  if (action === 'rename') return renameAction(session, away);
+  if (action === 'generate') return generateTitleAction(session, away);
+  if (action === 'delete') return deleteAction(session);
+  if (action === 'resume') return resumeAction(session);
+  return Promise.resolve(STAY);
 };
 
 const runActionMenu = async session => {
+  // Kick off the away scan; race a short delay so the menu never blocks but the
+  // annex shows on the first paint when the scan is quick.
+  const awayPromise = getAway(session.sessionId, session.filePath);
+  let awayResolved = await Promise.race([awayPromise, delayPending(AWAY_RACE_MS)]);
   while (true) {
+    // On later paints the scan has settled — reflect it from the cache.
+    if (awayResolved === PENDING && awayCache.has(session.sessionId)) {
+      awayResolved = awayCache.get(session.sessionId);
+    }
+    const away = awayResolved === PENDING ? null : awayResolved;
+    const annex = awayResolved === PENDING
+      ? pc.dim('⏳ Résumé en cours de lecture…')
+      : (away ? pc.dim(truncate(away, AWAY_ANNEX_MAX)) : '');
+    const message = annex
+      ? `${session.sessionId.slice(0, 8)} — ${session.title}\n  ${annex}`
+      : `${session.sessionId.slice(0, 8)} — ${session.title}`;
+
     const action = await selectQuittable({
-      message: `${session.sessionId.slice(0, 8)} — ${session.title}`,
+      message,
       choices: [
         { name: 'Voir le transcript', value: 'view' },
         { name: 'Voir le transcript (brut JSONL)', value: 'view-raw' },
         { name: 'Renommer', value: 'rename' },
+        { name: 'Générer un titre (Claude)', value: 'generate' },
         { name: 'Supprimer', value: 'delete' },
         { name: 'Reprendre (claude --resume)', value: 'resume' },
         { name: pc.dim(`← Retour à la liste ${pc.dim('(q)')}`), value: 'back' },
@@ -275,10 +386,10 @@ const runActionMenu = async session => {
     if (action === QUIT || action === 'back') return BACK;
     if (action === null || action === 'quit') return EXIT;
 
-    const outcome = await ACTION_HANDLERS[action](session);
+    const outcome = await runAction(action, session, away);
     if (outcome === BACK) return BACK;
     if (outcome === EXIT) return EXIT;
-    // outcome === STAY: loop and re-display the action menu for this session.
+    // outcome === STAY: loop and re-display (annex may now be resolved).
   }
 };
 
