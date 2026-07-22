@@ -60,6 +60,15 @@ against the current directory, so it must run somewhere that maps back to the
 conversation's storage folder. Without a terminal (piped/scripted), `resume`
 prints guidance and exits non-zero rather than resuming in the wrong place.
 
+From the TUI's per-session menu you can also **generate a title with Claude**:
+`clh` runs `claude -p` on the session's `away_summary` (or its first prompt when
+none exists) and proposes a title you can accept, edit, or regenerate. The call
+runs isolated from any project context (neutral cwd, no settings, task pinned in
+a system prompt) so it returns a bare title. This is the only action that
+invokes Claude — browsing and listing stay fully local. When a session has an
+`away_summary`, it's also shown as a reminder while you rename and as an annex in
+the action menu.
+
 ## Skill usage analytics
 
 `clh skills` mines **every** transcript under `~/.claude/projects` (all
