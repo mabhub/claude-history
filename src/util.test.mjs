@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeCwd, resolveId, truncate, formatDate } from './util.mjs';
+import { encodeCwd, resolveId, truncate, formatDate, formatSize } from './util.mjs';
 
 test('encodeCwd: replaces slashes', () => {
   assert.equal(encodeCwd('/home/you/claude'), '-home-you-claude');
@@ -59,6 +59,28 @@ test('truncate: collapses whitespace', () => {
 
 test('truncate: empty string', () => {
   assert.equal(truncate('', 10), '');
+});
+
+test('formatSize: bytes below 1 KB stay in B with no decimal', () => {
+  assert.equal(formatSize(0), '0 B');
+  assert.equal(formatSize(812), '812 B');
+});
+
+test('formatSize: scales to KB/MB and keeps one decimal only when needed', () => {
+  assert.equal(formatSize(1024), '1 KB');
+  assert.equal(formatSize(1536), '1.5 KB');
+  assert.equal(formatSize(3 * 1024 * 1024), '3 MB');
+});
+
+test('formatSize: a value just under a threshold promotes to the next unit', () => {
+  // 1048575 B rounds to 1024.0 KB in-unit — should read 1 MB instead.
+  assert.equal(formatSize(1024 * 1024 - 1), '1 MB');
+  assert.equal(formatSize(1024 * 1024 * 1024 - 1), '1 GB');
+});
+
+test('formatSize: invalid input returns a placeholder', () => {
+  assert.equal(formatSize(-1), '?');
+  assert.equal(formatSize(NaN), '?');
 });
 
 test('formatDate: ISO string', () => {

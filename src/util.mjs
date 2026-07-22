@@ -52,6 +52,34 @@ export const formatDate = input => {
 };
 
 /**
+ * Format a byte count as a compact human-readable size (B, KB, MB, GB). Uses
+ * 1024-based units and drops the decimal for whole numbers and for bytes.
+ * @param {number} bytes - Size in bytes
+ * @returns {string} e.g. "812 B", "3.4 KB", "12 MB"
+ */
+export const formatSize = bytes => {
+  if (!Number.isFinite(bytes) || bytes < 0) return '?';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  // A value just under the next threshold (e.g. 1048575 B) rounds up to 1024.0
+  // in its unit — promote it one unit so it reads "1 MB", not "1024.0 KB".
+  if (unit < units.length - 1 && Number(value.toFixed(1)) >= 1024) {
+    value /= 1024;
+    unit += 1;
+  }
+  // Round once, then drop the decimal for whole numbers (incl. a promoted 1.0)
+  // and for the base byte unit.
+  const oneDp = Number(value.toFixed(1));
+  const rounded = unit === 0 || Number.isInteger(oneDp) ? String(oneDp) : oneDp.toFixed(1);
+  return `${rounded} ${units[unit]}`;
+};
+
+/**
  * Truncate a string to a maximum length, adding an ellipsis if cut.
  * @param {string} s - Input string
  * @param {number} max - Maximum length

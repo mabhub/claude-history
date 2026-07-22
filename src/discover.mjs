@@ -405,6 +405,7 @@ export const listSessions = async dir => {
       sessionId,
       filePath,
       mtime: stat.mtime,
+      size: stat.size,
       firstTimestamp: head.firstTimestamp ? new Date(head.firstTimestamp) : stat.mtime,
       title,
       titleSource: tail.customTitle ? 'custom' : tail.aiTitle ? 'ai' : 'prompt',
