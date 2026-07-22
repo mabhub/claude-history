@@ -245,7 +245,7 @@ const deleteAction = async session => {
 };
 
 const resumeAction = async session => {
-  await resumeSession(session.sessionId);
+  await resumeSession({ sessionId: session.sessionId, filePath: session.filePath });
   return EXIT;
 };
 

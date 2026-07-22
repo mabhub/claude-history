@@ -174,7 +174,7 @@ const cmdResume = async idOrPrefix => {
     console.log(pc.dim('Annulé.'));
     return;
   }
-  await resumeSession(session.sessionId);
+  await resumeSession({ sessionId: session.sessionId, filePath: session.filePath });
 };
 
 program

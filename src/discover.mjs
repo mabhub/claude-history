@@ -242,14 +242,16 @@ export const listSessionIds = async dir => {
 };
 
 /**
- * Read the head of a .jsonl transcript (first timestamp + first user prompt),
- * stopping as soon as both are found or HEAD_MAX_LINES is reached.
+ * Stream the first HEAD_MAX_LINES parsed entries of a transcript, invoking
+ * `onEntry` for each. Return a truthy value from `onEntry` to stop early (once
+ * everything of interest has been found), avoiding a full-file read. Unparseable
+ * and empty lines are skipped. Shared by every head reader so the streaming,
+ * early-stop and cleanup logic lives in one place.
  * @param {string} filePath - Path to the .jsonl file
- * @returns {Promise<{firstTimestamp: string|null, firstUserPrompt: string|null}>}
+ * @param {(entry: Object) => boolean|void} onEntry - Called per parsed entry; return true to stop
+ * @returns {Promise<void>}
  */
-const readHead = async filePath => {
-  let firstTimestamp = null;
-  let firstUserPrompt = null;
+const streamHeadEntries = async (filePath, onEntry) => {
   const stream = createReadStream(filePath, { encoding: 'utf8' });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   let lineCount = 0;
@@ -258,21 +260,54 @@ const readHead = async filePath => {
       lineCount += 1;
       if (line) {
         const entry = safeParse(line);
-        if (entry) {
-          if (!firstTimestamp && typeof entry.timestamp === 'string') {
-            firstTimestamp = entry.timestamp;
-          }
-          if (!firstUserPrompt && entry.type === 'user') {
-            firstUserPrompt = extractUserText(entry);
-          }
-        }
+        if (entry && onEntry(entry)) break;
       }
-      if ((firstTimestamp && firstUserPrompt) || lineCount >= HEAD_MAX_LINES) break;
+      if (lineCount >= HEAD_MAX_LINES) break;
     }
   } finally {
     rl.close();
     stream.destroy();
   }
+};
+
+/**
+ * Read the cwd a conversation was recorded in, from the transcript head. Claude
+ * Code stamps the real working directory onto its entries (`"cwd": "…"`), which
+ * is the reliable source — unlike the encoded projects-dir name, whose encoding
+ * is lossy and can't be decoded back. Returns null if no entry in the head
+ * carries a cwd (older or truncated transcripts).
+ * @param {string} filePath - Path to the .jsonl file
+ * @returns {Promise<string|null>} Absolute cwd, or null if absent
+ */
+export const readSessionCwd = async filePath => {
+  let cwd = null;
+  await streamHeadEntries(filePath, entry => {
+    if (typeof entry.cwd === 'string' && entry.cwd) {
+      cwd = entry.cwd;
+      return true;
+    }
+  });
+  return cwd;
+};
+
+/**
+ * Read the head of a .jsonl transcript (first timestamp + first user prompt),
+ * stopping as soon as both are found or HEAD_MAX_LINES is reached.
+ * @param {string} filePath - Path to the .jsonl file
+ * @returns {Promise<{firstTimestamp: string|null, firstUserPrompt: string|null}>}
+ */
+const readHead = async filePath => {
+  let firstTimestamp = null;
+  let firstUserPrompt = null;
+  await streamHeadEntries(filePath, entry => {
+    if (!firstTimestamp && typeof entry.timestamp === 'string') {
+      firstTimestamp = entry.timestamp;
+    }
+    if (!firstUserPrompt && entry.type === 'user') {
+      firstUserPrompt = extractUserText(entry);
+    }
+    return firstTimestamp && firstUserPrompt;
+  });
   return { firstTimestamp, firstUserPrompt };
 };
 

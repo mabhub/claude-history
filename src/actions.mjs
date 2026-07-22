@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { readSessionCwd, pathExists } from './discover.mjs';
 
 /**
  * Append a custom-title entry to the session's .jsonl file.
@@ -49,13 +50,30 @@ export const deleteSession = async ({ filePath, sessionId }) => {
 
 /**
  * Spawn `claude --resume <sessionId>` with inherited stdio, then exit with
- * the child's exit code.
- * @param {string} sessionId - Full session UUID
+ * the child's exit code. Runs the child in the conversation's own working
+ * directory (read from the transcript) rather than wherever `clh` was invoked
+ * — Claude Code resolves a session id against the cwd, so resuming a sub-folder
+ * or cross-project session from elsewhere would otherwise fail to find it.
+ *
+ * The recorded cwd may no longer exist (deleted/moved project). In that case we
+ * fall back to the current directory rather than passing a missing cwd to
+ * spawn, which would fail with a misleading `spawn claude ENOENT` — making it
+ * look like the `claude` binary is missing when it's the old cwd that's gone.
+ * @param {Object} options
+ * @param {string} options.sessionId - Full session UUID
+ * @param {string} options.filePath - Path to the session's .jsonl transcript
  * @returns {Promise<never>} Process exits before resolving
  */
-export const resumeSession = sessionId =>
-  new Promise((_resolve, reject) => {
-    const child = spawn('claude', ['--resume', sessionId], { stdio: 'inherit' });
+export const resumeSession = async ({ sessionId, filePath }) => {
+  // Tolerate a transcript that vanished between listing and resume (race): a
+  // null cwd just means "resume from the current directory".
+  const recordedCwd = await readSessionCwd(filePath).catch(() => null);
+  const cwd = recordedCwd && (await pathExists(recordedCwd)) ? recordedCwd : null;
+  return new Promise((_resolve, reject) => {
+    const options = { stdio: 'inherit' };
+    if (cwd) options.cwd = cwd;
+    const child = spawn('claude', ['--resume', sessionId], options);
     child.on('error', reject);
     child.on('exit', code => process.exit(code ?? 0));
   });
+};

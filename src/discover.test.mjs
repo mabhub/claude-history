@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathExists, findSubProjects, findParentProjects, findSessionGlobally } from './discover.mjs';
+import { pathExists, findSubProjects, findParentProjects, findSessionGlobally, readSessionCwd } from './discover.mjs';
 import { encodeCwd } from './util.mjs';
 
 test('pathExists: true for a real directory', async () => {
@@ -23,6 +23,25 @@ test('pathExists: true for a file (not just dirs)', async () => {
   } finally {
     await fs.unlink(file);
   }
+});
+
+test('readSessionCwd: reads the cwd stamped on the first entry that carries it', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-cwd-'));
+  const filePath = path.join(dir, 'abc.jsonl');
+  // First line has no cwd (mirrors real transcripts starting with last-prompt).
+  await fs.writeFile(
+    filePath,
+    '{"type":"last-prompt"}\n{"type":"user","cwd":"/home/me/project"}\n',
+    'utf8',
+  );
+  assert.equal(await readSessionCwd(filePath), '/home/me/project');
+});
+
+test('readSessionCwd: returns null when no head entry carries a cwd', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-cwd-'));
+  const filePath = path.join(dir, 'abc.jsonl');
+  await fs.writeFile(filePath, '{"type":"user"}\n{"type":"assistant"}\n', 'utf8');
+  assert.equal(await readSessionCwd(filePath), null);
 });
 
 /**
