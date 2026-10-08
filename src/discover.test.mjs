@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathExists, findSubProjects, findParentProjects, findSessionGlobally, readSessionCwd, readFirstUserPrompt, listSessions } from './discover.mjs';
 import { encodeCwd } from './util.mjs';
+import { setSessionColor } from './actions.mjs';
 
 test('pathExists: true for a real directory', async () => {
   assert.equal(await pathExists(os.tmpdir()), true);
@@ -296,6 +297,22 @@ test('listSessions: color is null when no agent-color entry exists', async () =>
     ]);
     const [session] = await listSessions(dir);
     assert.equal(session.color, null);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('listSessions: reflects a color written by setSessionColor', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-color-'));
+  try {
+    const sessionId = 'cccccccc-0000-0000-0000-000000000000';
+    await writeLines(dir, sessionId, [
+      { type: 'user', message: { content: 'hi' }, timestamp: '2026-05-01T10:00:00Z' },
+      { type: 'agent-color', agentColor: 'blue' },
+    ]);
+    await setSessionColor({ filePath: path.join(dir, `${sessionId}.jsonl`), sessionId, color: 'orange' });
+    const [session] = await listSessions(dir);
+    assert.equal(session.color, 'orange');
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

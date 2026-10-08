@@ -5,11 +5,11 @@ import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
 import { listSessions, findSubProjects, findParentProjects, pathExists } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
-import { renameSession, deleteSession } from './actions.mjs';
+import { renameSession, setSessionColor, deleteSession } from './actions.mjs';
 import { resumeWithCwdCheck } from './resume-flow.mjs';
 import { readLatestAwaySummary } from './away-summary.mjs';
 import { generateTitle } from './title-gen.mjs';
-import { pipeToViewer, hasGlow, formatSessionRow, truncate, MISSING } from './util.mjs';
+import { pipeToViewer, hasGlow, formatSessionRow, truncate, tintTitle, SESSION_COLOR_NAMES, MISSING } from './util.mjs';
 
 /**
  * Sentinel returned by selectQuittable when the user pressed `q`.
@@ -255,6 +255,31 @@ const renameAction = async (session, away) => {
   return STAY;
 };
 
+/**
+ * Let the user pick a `/color` for the session, each name shown in its own
+ * tint. Writes only when the choice differs from the current color.
+ * @param {Object} session - Session record (mutated: `color`)
+ * @returns {Promise<'submenu'>}
+ */
+const colorAction = async session => {
+  const current = SESSION_COLOR_NAMES.includes(session.color) ? session.color : 'default';
+  const choice = await selectQuittable({
+    message: 'Couleur',
+    default: current,
+    choices: [
+      ...SESSION_COLOR_NAMES.map(name => ({ name: tintTitle(`● ${name}`, name), value: name })),
+      { name: 'Aucune (par défaut)', value: 'default' },
+      { name: pc.dim('Annuler'), value: 'cancel' },
+    ],
+  });
+  if (!choice || choice === QUIT || choice === 'cancel' || choice === current) return STAY;
+  await setSessionColor({ filePath: session.filePath, sessionId: session.sessionId, color: choice });
+  // Keep the record in sync, or reopening this menu compares against the old color.
+  session.color = choice;
+  console.log(pc.green(choice === 'default' ? '✓ Couleur retirée' : `✓ Couleur : ${tintTitle(choice, choice)}`));
+  return STAY;
+};
+
 const deleteAction = async session => {
   const ok = await confirm({
     message: `Supprimer définitivement "${session.title}" ?`,
@@ -346,6 +371,7 @@ const runAction = (action, session, away) => {
   if (action === 'view-raw') return viewTranscript(session, { raw: true });
   if (action === 'rename') return renameAction(session, away);
   if (action === 'generate') return generateTitleAction(session, away);
+  if (action === 'color') return colorAction(session);
   if (action === 'delete') return deleteAction(session);
   if (action === 'resume') return resumeAction(session);
   return Promise.resolve(STAY);
@@ -376,6 +402,7 @@ const runActionMenu = async session => {
         { name: 'Voir le transcript (brut JSONL)', value: 'view-raw' },
         { name: 'Renommer', value: 'rename' },
         { name: 'Générer un titre (Claude)', value: 'generate' },
+        { name: 'Changer la couleur', value: 'color' },
         { name: 'Supprimer', value: 'delete' },
         { name: 'Reprendre (claude --resume)', value: 'resume' },
         { name: pc.dim(`← Retour à la liste ${pc.dim('(q)')}`), value: 'back' },

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { renameSession, deleteSession, ensureDir } from './actions.mjs';
+import { renameSession, setSessionColor, deleteSession, ensureDir } from './actions.mjs';
 
 const mkTmp = () => fs.mkdtemp(path.join(os.tmpdir(), 'clh-actions-'));
 
@@ -25,6 +25,35 @@ test('renameSession: rejects an empty title', async () => {
     renameSession({ filePath, sessionId: 'abc', title: '   ' }),
     /Title cannot be empty/,
   );
+});
+
+test('setSessionColor: appends an agent-color entry', async () => {
+  const dir = await mkTmp();
+  const filePath = path.join(dir, 'abc.jsonl');
+  await fs.writeFile(filePath, '{"type":"user"}\n', 'utf8');
+  await setSessionColor({ filePath, sessionId: 'abc', color: 'pink' });
+  const last = JSON.parse((await fs.readFile(filePath, 'utf8')).trim().split('\n').at(-1));
+  assert.deepEqual(last, { type: 'agent-color', agentColor: 'pink', sessionId: 'abc' });
+});
+
+test('setSessionColor: writes "default" to reset, like /color default', async () => {
+  const dir = await mkTmp();
+  const filePath = path.join(dir, 'abc.jsonl');
+  await fs.writeFile(filePath, '', 'utf8');
+  await setSessionColor({ filePath, sessionId: 'abc', color: 'default' });
+  const last = JSON.parse((await fs.readFile(filePath, 'utf8')).trim());
+  assert.deepEqual(last, { type: 'agent-color', agentColor: 'default', sessionId: 'abc' });
+});
+
+test('setSessionColor: rejects an unknown color without writing', async () => {
+  const dir = await mkTmp();
+  const filePath = path.join(dir, 'abc.jsonl');
+  await fs.writeFile(filePath, '', 'utf8');
+  await assert.rejects(
+    setSessionColor({ filePath, sessionId: 'abc', color: 'turquoise' }),
+    /Unknown color "turquoise"/,
+  );
+  assert.equal(await fs.readFile(filePath, 'utf8'), '');
 });
 
 test('deleteSession: reports removedDir=true when a companion dir existed', async () => {

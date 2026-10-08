@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { SESSION_COLOR_NAMES } from './util.mjs';
 
 /**
  * Append a custom-title entry to the session's .jsonl file.
@@ -19,6 +20,25 @@ export const renameSession = async ({ filePath, sessionId, title }) => {
     customTitle: trimmed,
     sessionId,
   });
+  await fs.appendFile(filePath, `${entry}\n`, 'utf8');
+};
+
+/**
+ * Append an agent-color entry to the session's .jsonl file.
+ * Mirrors what Claude Code's /color command does internally — including the
+ * reset, which writes the literal "default" rather than removing anything.
+ * @param {Object} options
+ * @param {string} options.filePath - Path to the .jsonl transcript
+ * @param {string} options.sessionId - Full session UUID
+ * @param {string} options.color - One of SESSION_COLOR_NAMES, or 'default'
+ * @returns {Promise<void>}
+ */
+export const setSessionColor = async ({ filePath, sessionId, color }) => {
+  const allowed = [...SESSION_COLOR_NAMES, 'default'];
+  if (!allowed.includes(color)) {
+    throw new Error(`Unknown color "${color}". Expected: ${allowed.join(', ')}.`);
+  }
+  const entry = JSON.stringify({ type: 'agent-color', agentColor: color, sessionId });
   await fs.appendFile(filePath, `${entry}\n`, 'utf8');
 };
 

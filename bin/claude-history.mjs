@@ -5,11 +5,11 @@ import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
 import { findProjectDir, listSessions, listSessionIds, findSubProjects, findSessionGlobally, pathExists } from '../src/discover.mjs';
 import { renderTranscript } from '../src/transcript.mjs';
-import { renameSession, deleteSession } from '../src/actions.mjs';
+import { renameSession, setSessionColor, deleteSession } from '../src/actions.mjs';
 import { resumeWithCwdCheck } from '../src/resume-flow.mjs';
 import { runInteractive } from '../src/tui.mjs';
 import { cmdSkills } from '../src/skills-command.mjs';
-import { pipeToViewer, hasGlow, formatSessionRow, resolveId, MISSING } from '../src/util.mjs';
+import { pipeToViewer, hasGlow, formatSessionRow, resolveId, tintTitle, MISSING } from '../src/util.mjs';
 
 /**
  * Resolve the project directory for the current cwd. Walks up to parents
@@ -81,7 +81,7 @@ const resolveSession = async idOrPrefix => {
 
 /**
  * Emit a stderr warning that an id was resolved outside the current project.
- * Used by read-only commands (show, rename) that proceed without confirmation.
+ * Used by read-only commands (show, rename, color) that proceed without confirmation.
  * @param {{encodedDir: string}} session - Resolved session carrying its project dir name
  * @returns {void}
  */
@@ -150,6 +150,17 @@ const cmdRename = async (idOrPrefix, title) => {
   console.log(pc.green(`✓ ${sessionId.slice(0, 8)} renommé en "${title}"`));
 };
 
+const cmdColor = async (idOrPrefix, color) => {
+  const session = await resolveSession(idOrPrefix);
+  if (session.foundElsewhere) warnFoundElsewhere(session);
+  const { sessionId, filePath } = session;
+  await setSessionColor({ filePath, sessionId, color });
+  const shortId = sessionId.slice(0, 8);
+  console.log(pc.green(color === 'default'
+    ? `✓ ${shortId} couleur retirée`
+    : `✓ ${shortId} couleur : ${tintTitle(color, color)}`));
+};
+
 const cmdRm = async (idOrPrefix, opts) => {
   const session = await resolveSession(idOrPrefix);
   const { sessionId, filePath } = session;
@@ -211,6 +222,11 @@ program
   .command('rename <id> <title>')
   .description('Set a custom title (équivalent /rename de Claude Code).')
   .action(cmdRename);
+
+program
+  .command('color <id> <color>')
+  .description('Set the session color (équivalent /color de Claude Code ; "default" pour retirer).')
+  .action(cmdColor);
 
 program
   .command('rm <id>')

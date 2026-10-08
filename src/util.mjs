@@ -129,6 +129,9 @@ const SESSION_COLORS = {
   cyan: [8, 145, 178],
 };
 
+/** Color names `/color` accepts besides `default`, in Claude Code's theme order. */
+export const SESSION_COLOR_NAMES = Object.keys(SESSION_COLORS);
+
 /**
  * Tint a title with the session's `/color`, in Claude Code's own RGB value.
  * Any value outside the known palette (no color, a reset to default, …) leaves
