@@ -41,6 +41,7 @@ const LEGEND = [
 ].join(pc.dim(' · '));
 
 const QUIT_VALUE = '__quit__';
+const LIST_HELP = [['↑↓', 'naviguer'], ['←→', 'couleur'], ['d', 'supprimer'], ['⏎', 'choisir']];
 const NAV_PREFIX = 'nav:';
 
 // Away-summary cache for the lifetime of the TUI process: sessionId → summary
@@ -81,6 +82,9 @@ const AWAY_RACE_MS = 200;
  * @returns {Promise<void>}
  */
 export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
+  // Value the list cursor comes back to: the session just opened, or the
+  // neighbour of one just deleted. Unset (first row) on entry.
+  let cursor;
   while (true) {
     const [sessions, subProjects, parentProjects, cwdMissing] = await Promise.all([
       dir ? listSessions(dir) : Promise.resolve([]),
@@ -103,10 +107,16 @@ export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
       message: 'Choisir une conversation',
       pageSize,
       choices,
-      cycleLabel: 'couleur',
+      default: cursor,
+      help: LIST_HELP,
     }, listPrompt);
 
     if (choice === null || choice === QUIT || choice === QUIT_VALUE) return;
+
+    if (choice.key === 'd') {
+      cursor = await deleteFromList(sessions, choice.value);
+      continue;
+    }
 
     if (choice.startsWith(NAV_PREFIX)) {
       const targetDir = choice.slice(NAV_PREFIX.length);
@@ -121,6 +131,7 @@ export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
     }
 
     const session = sessions.find(s => s.sessionId === choice);
+    cursor = choice;
     const outcome = await runActionMenu(session);
     if (outcome === EXIT) return;
     // BACK falls through to the next loop iteration, which re-fetches
@@ -132,7 +143,7 @@ const printHeader = ({ label, walkedUp, sessionCount, cwdMissing }) => {
   const suffix = walkedUp ? pc.dim(` (remonté depuis ${process.cwd()})`) : '';
   const missing = cwdMissing ? `  ${MISSING.badge} ${MISSING.label}` : '';
   console.log(`\nConversations dans ${pc.bold(label)}${suffix}  ${pc.dim(`(${sessionCount})`)}${missing}`);
-  console.log(pc.dim(`Légende : ${LEGEND}  ·  ←→ couleur  ·  q/Échap quitter`));
+  console.log(pc.dim(`Légende : ${LEGEND}  ·  ←→ couleur  ·  d supprimer  ·  q/Échap quitter`));
   console.log('');
 };
 
@@ -175,7 +186,12 @@ const buildChoices = ({ sessions, subProjects, parentProjects }) => {
     choices.push(new Separator(pc.dim('— Conversations du dossier courant —')));
   }
   for (const s of sessions) {
-    choices.push({ name: formatChoice(s), value: s.sessionId, onCycle: step => cycleSessionColor(s, step) });
+    choices.push({
+      name: formatChoice(s),
+      value: s.sessionId,
+      onCycle: step => cycleSessionColor(s, step),
+      keys: ['d'],
+    });
   }
   choices.push(new Separator(' '));
   choices.push({ name: pc.dim('Quitter'), value: QUIT_VALUE });
@@ -268,19 +284,41 @@ const colorAction = async session => {
   return STAY;
 };
 
-const deleteAction = async session => {
+/**
+ * Ask for confirmation (Escape cancels), then delete the session.
+ * Shared by the action menu and the list's `d` key.
+ * @param {Object} session - Session record
+ * @returns {Promise<boolean>} Whether the session was deleted
+ */
+const confirmDelete = async session => {
   const ok = await promptCancellable(confirm, {
     message: `Supprimer définitivement "${session.title}" ?`,
     default: false,
   });
-  if (!ok) return STAY;
+  if (!ok) return false;
   const { removedDir } = await deleteSession({
     filePath: session.filePath,
     sessionId: session.sessionId,
   });
   console.log(pc.green(`✓ Supprimé${removedDir ? ' (+ dossier associé)' : ''}`));
-  // Session no longer exists — fall back to the refreshed list.
-  return BACK;
+  return true;
+};
+
+// Once deleted the session no longer exists — fall back to the refreshed list.
+const deleteAction = async session => ((await confirmDelete(session)) ? BACK : STAY);
+
+/**
+ * `d` on a list row: confirm and delete, then pick the row the cursor returns
+ * to — the next session (else the previous one) once deleted, the same one
+ * if cancelled.
+ * @param {Array<Object>} sessions - Sessions in list order
+ * @param {string} sessionId - Session the key was pressed on
+ * @returns {Promise<string|undefined>} Session id for the cursor
+ */
+const deleteFromList = async (sessions, sessionId) => {
+  const index = sessions.findIndex(s => s.sessionId === sessionId);
+  if (!(await confirmDelete(sessions[index]))) return sessionId;
+  return (sessions[index + 1] ?? sessions[index - 1])?.sessionId;
 };
 
 const resumeAction = async session => {

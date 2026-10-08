@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Separator } from '@inquirer/core';
-import { nextActiveIndex } from './list-prompt.mjs';
+import { nextActiveIndex, initialActiveIndex } from './list-prompt.mjs';
 
 const choice = name => ({ name, value: name });
 const sep = () => new Separator();
@@ -35,4 +35,16 @@ test('nextActiveIndex: stays put on a single choice', () => {
   const items = [sep(), choice('only'), sep()];
   assert.equal(nextActiveIndex(items, 1, 1), 1);
   assert.equal(nextActiveIndex(items, 1, -1), 1);
+});
+
+test('initialActiveIndex: lands on the choice holding the value', () => {
+  const items = [sep(), choice('a'), choice('b')];
+  assert.equal(initialActiveIndex(items, 'b'), 2);
+});
+
+test('initialActiveIndex: falls back to the first choice when the value is gone', () => {
+  // e.g. the remembered session was just deleted
+  const items = [sep(), choice('a'), choice('b')];
+  assert.equal(initialActiveIndex(items, 'zzz'), 1);
+  assert.equal(initialActiveIndex(items, undefined), 1);
 });

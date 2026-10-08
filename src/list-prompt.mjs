@@ -35,6 +35,20 @@ export const nextActiveIndex = (items, active, offset) => {
   return next;
 };
 
+/**
+ * Index the prompt starts on: the choice holding `value`, else the first
+ * choice (e.g. when the remembered row was just deleted).
+ * @param {Array<Object|Separator>} items - Choices and separators
+ * @param {unknown} value - Value of the choice to land on
+ * @returns {number} Index of a choice
+ */
+export const initialActiveIndex = (items, value) => {
+  const index = items.findIndex(item => isChoice(item) && item.value === value);
+  return index === -1 ? items.findIndex(isChoice) : index;
+};
+
+const DEFAULT_HELP = [['↑↓', 'naviguer'], ['⏎', 'choisir']];
+
 const helpTip = keys => keys
   .map(([key, action]) => `${pc.bold(key)} ${pc.dim(action)}`)
   .join(pc.dim(' • '));
@@ -49,22 +63,27 @@ const helpTip = keys => keys
  * the change and resolves to the choice's new display name. Keys pressed while
  * a callback runs are ignored, so writes never interleave.
  *
+ * A choice can also list `keys` (letter names, e.g. `['d']`): pressing one on
+ * that choice ends the prompt with `{ key, value }`, so the caller can run a
+ * follow-up prompt (a confirmation) that can't nest inside this one.
+ *
  * @param {Object} config
  * @param {string} config.message - Prompt message
- * @param {Array<Object|Separator>} config.choices - `{ name, value, onCycle? }` or Separator
+ * @param {Array<Object|Separator>} config.choices - `{ name, value, onCycle?, keys? }` or Separator
+ * @param {unknown} [config.default] - Value of the initially active choice
  * @param {number} [config.pageSize=7] - Visible rows
- * @param {string} [config.cycleLabel='changer'] - Help-line label for ← →
- * @returns {Promise<unknown>} The selected choice's value
+ * @param {Array<[string, string]>} [config.help] - Help-line `[key, label]` pairs
+ * @returns {Promise<unknown|{key: string, value: unknown}>} The chosen value, or the key action
  */
 export const listPrompt = createPrompt((config, done) => {
-  const { pageSize = 7, cycleLabel = 'changer' } = config;
+  const { pageSize = 7, help = DEFAULT_HELP } = config;
   const theme = makeTheme(config.theme);
   const [status, setStatus] = useState('idle');
   const prefix = usePrefix({ status, theme });
   const [items, setItems] = useState(config.choices);
   const [error, setError] = useState();
   const busy = useRef(false);
-  const [active, setActive] = useState(() => items.findIndex(isChoice));
+  const [active, setActive] = useState(() => initialActiveIndex(items, config.default));
   const current = items[active];
 
   useKeypress(async (key, rl) => {
@@ -76,6 +95,9 @@ export const listPrompt = createPrompt((config, done) => {
       done(current.value);
     } else if (isUpKey(key) || isDownKey(key)) {
       setActive(nextActiveIndex(items, active, isUpKey(key) ? -1 : 1));
+    } else if (current.keys?.includes(key.name) && !key.ctrl && !key.meta) {
+      setStatus('done');
+      done({ key: key.name, value: current.value });
     } else if ((key.name === 'left' || key.name === 'right') && current.onCycle) {
       busy.current = true;
       try {
@@ -102,8 +124,7 @@ export const listPrompt = createPrompt((config, done) => {
   if (status === 'done') {
     return [prefix, message, theme.style.answer(current.name)].join(' ');
   }
-  const help = helpTip([['↑↓', 'naviguer'], ['←→', cycleLabel], ['⏎', 'choisir']]);
-  const lines = [`${prefix} ${message}`, page, ' ', error ? theme.style.error(error) : '', help]
+  const lines = [`${prefix} ${message}`, page, ' ', error ? theme.style.error(error) : '', helpTip(help)]
     .filter(Boolean)
     .join('\n');
   return `${lines}${CURSOR_HIDE}`;
