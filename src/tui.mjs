@@ -9,7 +9,8 @@ import { renameSession, setSessionColor, deleteSession } from './actions.mjs';
 import { resumeWithCwdCheck } from './resume-flow.mjs';
 import { readLatestAwaySummary } from './away-summary.mjs';
 import { generateTitle } from './title-gen.mjs';
-import { pipeToViewer, hasGlow, formatSessionRow, truncate, tintTitle, SESSION_COLOR_NAMES, MISSING } from './util.mjs';
+import { listPrompt } from './list-prompt.mjs';
+import { pipeToViewer, hasGlow, formatSessionRow, truncate, tintTitle, cycleColor, SESSION_COLOR_NAMES, MISSING } from './util.mjs';
 
 /**
  * Sentinel returned by selectQuittable when the user pressed `q`.
@@ -18,17 +19,18 @@ import { pipeToViewer, hasGlow, formatSessionRow, truncate, tintTitle, SESSION_C
 export const QUIT = Symbol('quit');
 
 /**
- * Run @inquirer/select with an extra global keybinding: pressing `q` aborts
- * the prompt and returns the QUIT sentinel. Ctrl-C still works as usual
+ * Run a list prompt (@inquirer/select by default) with an extra global
+ * keybinding: pressing `q` aborts the prompt and returns the QUIT sentinel. Ctrl-C still works as usual
  * (handled by Inquirer itself, surfaces as ExitPromptError → null).
  *
  * Only attach this on list menus — using it around `input` would steal the
  * `q` keystroke from the typed text.
  *
- * @param {Object} config - Same shape as @inquirer/select's config
+ * @param {Object} config - Config passed through to `prompt`
+ * @param {Function} [prompt=select] - Inquirer prompt taking `(config, { signal })`
  * @returns {Promise<unknown|typeof QUIT|null>} Selected value, QUIT, or null on Ctrl-C
  */
-const selectQuittable = async config => {
+const selectQuittable = async (config, prompt = select) => {
   readline.emitKeypressEvents(process.stdin);
   const controller = new AbortController();
   const onKey = (_, key) => {
@@ -38,7 +40,7 @@ const selectQuittable = async config => {
   };
   process.stdin.on('keypress', onKey);
   try {
-    return await select(config, { signal: controller.signal });
+    return await prompt(config, { signal: controller.signal });
   } catch (err) {
     if (err?.name === 'AbortPromptError' && err.cause === 'quit') return QUIT;
     if (err?.name === 'ExitPromptError') return null;
@@ -130,7 +132,8 @@ export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
       message: 'Choisir une conversation',
       pageSize,
       choices,
-    });
+      cycleLabel: 'couleur',
+    }, listPrompt);
 
     if (choice === null || choice === QUIT || choice === QUIT_VALUE) return;
 
@@ -158,7 +161,7 @@ const printHeader = ({ label, walkedUp, sessionCount, cwdMissing }) => {
   const suffix = walkedUp ? pc.dim(` (remonté depuis ${process.cwd()})`) : '';
   const missing = cwdMissing ? `  ${MISSING.badge} ${MISSING.label}` : '';
   console.log(`\nConversations dans ${pc.bold(label)}${suffix}  ${pc.dim(`(${sessionCount})`)}${missing}`);
-  console.log(pc.dim(`Légende : ${LEGEND}  ·  q pour quitter`));
+  console.log(pc.dim(`Légende : ${LEGEND}  ·  ←→ couleur  ·  q pour quitter`));
   console.log('');
 };
 
@@ -201,7 +204,7 @@ const buildChoices = ({ sessions, subProjects, parentProjects }) => {
     choices.push(new Separator(pc.dim('— Conversations du dossier courant —')));
   }
   for (const s of sessions) {
-    choices.push({ name: formatChoice(s), value: s.sessionId });
+    choices.push({ name: formatChoice(s), value: s.sessionId, onCycle: step => cycleSessionColor(s, step) });
   }
   choices.push(new Separator(' '));
   choices.push({ name: pc.dim('Quitter'), value: QUIT_VALUE });
@@ -217,6 +220,20 @@ const relativePath = absPath => {
 const formatChoice = s => {
   const badge = TITLE_SOURCE_BADGES[s.titleSource] ?? pc.dim('○');
   return `${badge} ${formatSessionRow(s)}`;
+};
+
+/**
+ * ← → handler for a list row: write the next `/color` and update the session
+ * record in place, so an action menu opened right after sees it too.
+ * @param {Object} s - Session record (mutated: `color`)
+ * @param {1|-1} step - Direction
+ * @returns {Promise<string>} The row's new display name
+ */
+const cycleSessionColor = async (s, step) => {
+  const color = cycleColor(s.color, step);
+  await setSessionColor({ filePath: s.filePath, sessionId: s.sessionId, color });
+  s.color = color;
+  return formatChoice(s);
 };
 
 // Action handlers return one of:

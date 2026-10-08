@@ -132,6 +132,21 @@ const SESSION_COLORS = {
 /** Color names `/color` accepts besides `default`, in Claude Code's theme order. */
 export const SESSION_COLOR_NAMES = Object.keys(SESSION_COLORS);
 
+const COLOR_CYCLE = [...SESSION_COLOR_NAMES, 'default'];
+
+/**
+ * Step to the next (or previous) `/color` in a loop that includes 'default'
+ * (no color) between cyan and red. A missing or unknown color counts as
+ * 'default', so the first step forward lands on red.
+ * @param {string|null|undefined} current - Raw `agentColor`
+ * @param {1|-1} step - Direction
+ * @returns {string} One of SESSION_COLOR_NAMES, or 'default'
+ */
+export const cycleColor = (current, step) => {
+  const from = COLOR_CYCLE.includes(current) ? COLOR_CYCLE.indexOf(current) : COLOR_CYCLE.length - 1;
+  return COLOR_CYCLE[(from + step + COLOR_CYCLE.length) % COLOR_CYCLE.length];
+};
+
 /**
  * Tint a title with the session's `/color`, in Claude Code's own RGB value.
  * Any value outside the known palette (no color, a reset to default, …) leaves

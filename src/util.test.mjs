@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeCwd, resolveId, truncate, formatDate, formatSize, formatAge, formatSessionRow, tintTitle } from './util.mjs';
+import { encodeCwd, resolveId, truncate, formatDate, formatSize, formatAge, formatSessionRow, tintTitle, cycleColor } from './util.mjs';
 
 test('encodeCwd: replaces slashes', () => {
   assert.equal(encodeCwd('/home/you/claude'), '-home-you-claude');
@@ -145,4 +145,22 @@ test('tintTitle: leaves the title untouched without a known color', () => {
 
 test('tintTitle: leaves the title untouched when colors are disabled', () => {
   assert.equal(tintTitle('Titre', 'pink', false), 'Titre');
+});
+
+test('cycleColor: steps forward and backward through the palette', () => {
+  assert.equal(cycleColor('red', 1), 'blue');
+  assert.equal(cycleColor('blue', -1), 'red');
+});
+
+test('cycleColor: "default" sits between cyan and red, closing the loop', () => {
+  assert.equal(cycleColor('cyan', 1), 'default');
+  assert.equal(cycleColor('default', 1), 'red');
+  assert.equal(cycleColor('red', -1), 'default');
+  assert.equal(cycleColor('default', -1), 'cyan');
+});
+
+test('cycleColor: a missing or unknown color starts from "default"', () => {
+  assert.equal(cycleColor(null, 1), 'red');
+  assert.equal(cycleColor(undefined, -1), 'cyan');
+  assert.equal(cycleColor('turquoise', 1), 'red');
 });
