@@ -120,15 +120,18 @@ export const generateTitle = async (filePath, { timeoutMs = DEFAULT_TIMEOUT_MS, 
   //     history (which clh itself lists)
   //   - --max-turns 1 + --tools '': a single turn, no tool use — nothing to read
   //     or act on, just answer. Bounds tokens and keeps it deterministic.
+  //   - the prompt goes after `--`: -p is a flag, the prompt a positional, so a
+  //     context starting with "-" (a pasted bullet list) was parsed as an option
   // (Default model kept: measured faster here than haiku for this short task.)
   const args = [
-    '-p', prompt,
+    '-p',
     '--system-prompt', systemPrompt,
     '--setting-sources', '',
     '--strict-mcp-config',
     '--no-session-persistence',
     '--max-turns', '1',
     '--tools', '',
+    '--', prompt,
   ];
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, { stdio: ['ignore', 'pipe', 'ignore'], cwd: os.tmpdir() });
