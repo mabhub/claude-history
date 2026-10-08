@@ -1,10 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTitlePrompt, cleanGeneratedTitle, detectLanguage, buildSystemPrompt, describeExitFailure } from './title-gen.mjs';
-
-test('buildTitlePrompt: carries the context (instructions live in the system prompt)', () => {
-  assert.equal(buildTitlePrompt('Refactor the auth module'), 'Refactor the auth module');
-});
+import { cleanGeneratedTitle, detectLanguage, buildSystemPrompt, describeExitFailure } from './title-gen.mjs';
 
 test('detectLanguage: French text detected as fr despite technical English terms', () => {
   assert.equal(detectLanguage("Configuration d'un routeur de bordure Thread via ssh, avec diagnostic réseau"), 'fr');

@@ -50,15 +50,6 @@ export const buildSystemPrompt = lang => {
   ].join(' ');
 };
 
-/**
- * Build the user prompt sent to `claude -p` (the conversation excerpt). The
- * instructions live in the system prompt; this is just the content to title.
- * Kept pure so it can be unit-tested without spawning anything.
- * @param {string} context - away_summary or a fallback excerpt of the conversation
- * @returns {string} Prompt text
- */
-export const buildTitlePrompt = context => context;
-
 // A leading "Titre :" / "Title:" preamble claude sometimes prepends on the
 // same line as the title.
 const PREAMBLE_RE = /^(?:titre|title)\s*:\s*/i;
@@ -123,7 +114,6 @@ export const buildTitleContext = async filePath => {
 export const generateTitle = async (filePath, { timeoutMs = DEFAULT_TIMEOUT_MS, context } = {}) => {
   const ctx = context ?? (await buildTitleContext(filePath));
   if (!ctx) throw new Error('Aucun contenu exploitable pour générer un titre.');
-  const prompt = buildTitlePrompt(ctx);
   // Pin the title's language to the context's own, rather than let the model
   // infer it — inference drifts to English on short, jargon-heavy summaries.
   const systemPrompt = buildSystemPrompt(detectLanguage(ctx));
@@ -146,7 +136,7 @@ export const generateTitle = async (filePath, { timeoutMs = DEFAULT_TIMEOUT_MS, 
     '--no-session-persistence',
     '--max-turns', '1',
     '--tools', '',
-    '--', prompt,
+    '--', ctx,
   ];
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, { stdio: ['ignore', 'pipe', 'pipe'], cwd: os.tmpdir() });
