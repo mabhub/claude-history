@@ -5,7 +5,14 @@ import path from 'node:path';
 import { projectsDirFor, defaultProjectsRoot, encodeCwd, truncate } from './util.mjs';
 import { cleanUserText } from './transcript.mjs';
 
-const TAIL_READ_BYTES = 8 * 1024;
+// Claude Code's own session picker reads the last 64 KB, and it re-appends the
+// title/color block only often enough to stay within that window — a single
+// turn can push it tens of KB from the end. Reading less misses it.
+const TAIL_READ_BYTES = 64 * 1024;
+// Only lines holding one of these get JSON-parsed (plus the few trailing ones
+// scanned for a timestamp). Claude Code serializes without spaces, and inside a
+// message body the quotes would be escaped, so this never skips a real entry.
+const TAIL_META_MARKERS = ['"type":"custom-title"', '"type":"ai-title"', '"type":"agent-color"'];
 const HEAD_MAX_LINES = 50;
 
 /**
@@ -330,47 +337,50 @@ export const readFirstUserPrompt = async filePath => {
 
 /**
  * Read the tail of a .jsonl transcript (last TAIL_READ_BYTES) and extract the
- * latest custom-title / ai-title / agent-color entries — all are appended
- * (and periodically re-appended together) at the end of the file by Claude Code.
+ * latest custom-title / ai-title / agent-color entries, which Claude Code
+ * periodically re-appends together near the end of the file.
  * Also returns the latest entry `timestamp`: those metadata entries carry none,
  * so it dates the last real activity even when they were written hours later.
+ * Lines are scanned from the end, so the first match of each kind is the latest
+ * and the scan stops once all four are known.
  * @param {string} filePath - Path to the .jsonl file
  * @param {number} fileSize - Total file size in bytes
  * @returns {Promise<{customTitle: string|null, aiTitle: string|null, agentColor: string|null, lastTimestamp: string|null}>}
  */
 const readTailMeta = async (filePath, fileSize) => {
-  let customTitle = null;
-  let aiTitle = null;
-  let agentColor = null;
-  let lastTimestamp = null;
+  const meta = { customTitle: null, aiTitle: null, agentColor: null, lastTimestamp: null };
   const readSize = Math.min(TAIL_READ_BYTES, fileSize);
-  if (readSize === 0) return { customTitle, aiTitle, agentColor, lastTimestamp };
+  if (readSize === 0) return meta;
 
   const fh = await fs.open(filePath, 'r');
+  let text;
   try {
     const buf = Buffer.alloc(readSize);
     await fh.read(buf, 0, readSize, fileSize - readSize);
-    const text = buf.toString('utf8');
-    // Drop partial first line if we started mid-line.
-    const lines = text.split('\n');
-    if (fileSize > readSize) lines.shift();
-    for (const line of lines) {
-      if (!line) continue;
-      const entry = safeParse(line);
-      if (!entry) continue;
-      if (typeof entry.timestamp === 'string') lastTimestamp = entry.timestamp;
-      if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') {
-        customTitle = entry.customTitle;
-      } else if (entry.type === 'ai-title' && typeof entry.aiTitle === 'string') {
-        aiTitle = entry.aiTitle;
-      } else if (entry.type === 'agent-color' && typeof entry.agentColor === 'string') {
-        agentColor = entry.agentColor;
-      }
-    }
+    text = buf.toString('utf8');
   } finally {
     await fh.close();
   }
-  return { customTitle, aiTitle, agentColor, lastTimestamp };
+  const lines = text.split('\n');
+  // Drop partial first line if we started mid-line.
+  if (fileSize > readSize) lines.shift();
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    const needsTimestamp = meta.lastTimestamp === null;
+    if (!line || (!needsTimestamp && !TAIL_META_MARKERS.some(marker => line.includes(marker)))) continue;
+    const entry = safeParse(line);
+    if (!entry) continue;
+    if (needsTimestamp && typeof entry.timestamp === 'string') meta.lastTimestamp = entry.timestamp;
+    if (entry.type === 'custom-title' && meta.customTitle === null && typeof entry.customTitle === 'string') {
+      meta.customTitle = entry.customTitle;
+    } else if (entry.type === 'ai-title' && meta.aiTitle === null && typeof entry.aiTitle === 'string') {
+      meta.aiTitle = entry.aiTitle;
+    } else if (entry.type === 'agent-color' && meta.agentColor === null && typeof entry.agentColor === 'string') {
+      meta.agentColor = entry.agentColor;
+    }
+    if (Object.values(meta).every(value => value !== null)) break;
+  }
+  return meta;
 };
 
 const safeParse = line => {

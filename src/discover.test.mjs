@@ -365,3 +365,29 @@ test('listSessions: sorts by lastActivity, ignoring a fresher mtime', async () =
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('listSessions: finds title and color re-appended well before the last 8 KB', async () => {
+  // Claude Code re-appends its metadata block only now and then, sizing it for
+  // its own 64 KB tail window; a turn can push it tens of KB from the end.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-tail-'));
+  try {
+    const sessionId = '99999999-0000-0000-0000-000000000000';
+    const filler = Array.from({ length: 20 }, (_, i) => ({
+      type: 'assistant',
+      message: { content: 'x'.repeat(1000) },
+      timestamp: `2026-05-01T10:${String(i).padStart(2, '0')}:00Z`,
+    }));
+    await writeLines(dir, sessionId, [
+      { type: 'user', message: { content: 'hi' }, timestamp: '2026-05-01T09:00:00Z' },
+      { type: 'ai-title', aiTitle: 'Titre lointain' },
+      { type: 'agent-color', agentColor: 'orange' },
+      ...filler,
+    ]);
+    const [session] = await listSessions(dir);
+    assert.equal(session.title, 'Titre lointain');
+    assert.equal(session.color, 'orange');
+    assert.equal(session.lastActivity.toISOString(), '2026-05-01T10:19:00.000Z');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
