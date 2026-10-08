@@ -5,17 +5,7 @@ import pc from 'picocolors';
 import { resolveCwdState } from './resume-cwd.mjs';
 import { resumeSession, ensureDir } from './actions.mjs';
 import { encodeCwd } from './util.mjs';
-
-/**
- * Treat an Inquirer Ctrl-C rejection as a graceful cancel (returns null),
- * re-throwing anything else.
- * @param {unknown} err
- * @returns {null}
- */
-const asCancel = err => {
-  if (err?.name === 'ExitPromptError') return null;
-  throw err;
-};
+import { promptCancellable } from './prompt-keys.mjs';
 
 /**
  * Recreate `cwd` (mkdir -p) then resume in it. Surfaces a mkdir failure as a
@@ -43,14 +33,14 @@ const recreateAndResume = async (sessionId, cwd) => {
  */
 const promptMissing = async (sessionId, recordedCwd) => {
   console.error(pc.yellow(`⚠ Le dossier d'origine de cette conversation n'existe plus :\n  ${recordedCwd}`));
-  const choice = await select({
+  const choice = await promptCancellable(select, {
     message: 'Que faire ?',
     choices: [
       { name: `Recréer ${recordedCwd} et reprendre`, value: 'recreate' },
       { name: 'Déplacer vers un autre dossier… (bientôt)', value: 'move', disabled: true },
       { name: 'Annuler', value: 'cancel' },
     ],
-  }).catch(asCancel);
+  });
   if (choice === 'recreate') return recreateAndResume(sessionId, recordedCwd);
   return 'cancelled';
 };
@@ -65,26 +55,26 @@ const promptMissing = async (sessionId, recordedCwd) => {
  */
 const promptUnknown = async (sessionId, { encodedDir, guess }) => {
   console.error(pc.yellow('⚠ Impossible de lire le dossier d\'origine dans le transcript.'));
-  const choice = await select({
+  const choice = await promptCancellable(select, {
     message: 'Que faire ?',
     choices: [
       { name: 'Saisir le dossier d\'origine…', value: 'enter' },
       { name: 'Annuler', value: 'cancel' },
     ],
-  }).catch(asCancel);
+  });
   if (choice !== 'enter') return 'cancelled';
 
-  const entered = await input({
+  const entered = await promptCancellable(input, {
     message: 'Dossier d\'origine',
     default: guess ?? '',
-  }).catch(asCancel);
+  });
   if (!entered) return 'cancelled';
 
   if (encodeCwd(entered) !== encodedDir) {
-    const proceed = await confirm({
+    const proceed = await promptCancellable(confirm, {
       message: 'Ce dossier ne correspond pas à l\'emplacement stocké ; Claude risque de ne pas retrouver la conversation. Continuer ?',
       default: false,
-    }).catch(() => false);
+    });
     if (!proceed) return 'cancelled';
   }
   return recreateAndResume(sessionId, entered);

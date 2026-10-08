@@ -1,4 +1,3 @@
-import readline from 'node:readline';
 import select, { Separator } from '@inquirer/select';
 import input from '@inquirer/input';
 import confirm from '@inquirer/confirm';
@@ -10,45 +9,17 @@ import { resumeWithCwdCheck } from './resume-flow.mjs';
 import { readLatestAwaySummary } from './away-summary.mjs';
 import { generateTitle } from './title-gen.mjs';
 import { listPrompt } from './list-prompt.mjs';
+import { QUIT, promptQuittable, promptCancellable } from './prompt-keys.mjs';
 import { pipeToViewer, hasGlow, formatSessionRow, truncate, tintTitle, cycleColor, SESSION_COLOR_NAMES, MISSING } from './util.mjs';
 
 /**
- * Sentinel returned by selectQuittable when the user pressed `q`.
- * Callers compare with === to distinguish from normal select values.
- */
-export const QUIT = Symbol('quit');
-
-/**
- * Run a list prompt (@inquirer/select by default) with an extra global
- * keybinding: pressing `q` aborts the prompt and returns the QUIT sentinel. Ctrl-C still works as usual
- * (handled by Inquirer itself, surfaces as ExitPromptError → null).
- *
- * Only attach this on list menus — using it around `input` would steal the
- * `q` keystroke from the typed text.
- *
+ * Run a list menu (@inquirer/select by default) where `q` and Escape go back,
+ * or quit at the top level. See promptQuittable.
  * @param {Object} config - Config passed through to `prompt`
- * @param {Function} [prompt=select] - Inquirer prompt taking `(config, { signal })`
+ * @param {Function} [prompt=select] - Inquirer prompt
  * @returns {Promise<unknown|typeof QUIT|null>} Selected value, QUIT, or null on Ctrl-C
  */
-const selectQuittable = async (config, prompt = select) => {
-  readline.emitKeypressEvents(process.stdin);
-  const controller = new AbortController();
-  const onKey = (_, key) => {
-    if (key?.name === 'q' && !key.ctrl && !key.meta) {
-      controller.abort('quit');
-    }
-  };
-  process.stdin.on('keypress', onKey);
-  try {
-    return await prompt(config, { signal: controller.signal });
-  } catch (err) {
-    if (err?.name === 'AbortPromptError' && err.cause === 'quit') return QUIT;
-    if (err?.name === 'ExitPromptError') return null;
-    throw err;
-  } finally {
-    process.stdin.off('keypress', onKey);
-  }
-};
+const selectQuittable = (config, prompt = select) => promptQuittable(prompt, config);
 
 // Visual vocabulary used in the TUI:
 //   ● green   custom title set via /rename
@@ -161,7 +132,7 @@ const printHeader = ({ label, walkedUp, sessionCount, cwdMissing }) => {
   const suffix = walkedUp ? pc.dim(` (remonté depuis ${process.cwd()})`) : '';
   const missing = cwdMissing ? `  ${MISSING.badge} ${MISSING.label}` : '';
   console.log(`\nConversations dans ${pc.bold(label)}${suffix}  ${pc.dim(`(${sessionCount})`)}${missing}`);
-  console.log(pc.dim(`Légende : ${LEGEND}  ·  ←→ couleur  ·  q pour quitter`));
+  console.log(pc.dim(`Légende : ${LEGEND}  ·  ←→ couleur  ·  q/Échap quitter`));
   console.log('');
 };
 
@@ -257,10 +228,10 @@ const viewTranscript = async (session, { raw }) => {
 
 const renameAction = async (session, away) => {
   if (away) console.log(pc.dim(`Résumé : ${truncate(away, AWAY_ANNEX_MAX)}`));
-  const title = await input({
+  const title = await promptCancellable(input, {
     message: 'Nouveau titre',
     default: session.titleSource === 'custom' ? session.title : '',
-  }).catch(handleCancel);
+  });
   if (title) {
     await renameSession({
       filePath: session.filePath,
@@ -298,10 +269,10 @@ const colorAction = async session => {
 };
 
 const deleteAction = async session => {
-  const ok = await confirm({
+  const ok = await promptCancellable(confirm, {
     message: `Supprimer définitivement "${session.title}" ?`,
     default: false,
-  }).catch(handleCancel);
+  });
   if (!ok) return STAY;
   const { removedDir } = await deleteSession({
     filePath: session.filePath,
@@ -355,7 +326,7 @@ const generateTitleAction = async (session, away) => {
       return STAY;
     }
     if (choice === 'edit') {
-      const edited = await input({ message: 'Titre', default: title }).catch(handleCancel);
+      const edited = await promptCancellable(input, { message: 'Titre', default: title });
       if (edited) {
         await renameSession({ filePath: session.filePath, sessionId: session.sessionId, title: edited });
         console.log(pc.green(`✓ Renommé: ${edited}`));
@@ -435,14 +406,4 @@ const runActionMenu = async session => {
     if (outcome === EXIT) return EXIT;
     // outcome === STAY: loop and re-display (annex may now be resolved).
   }
-};
-
-/**
- * Inquirer rejects with an Error on Ctrl-C. Treat as graceful cancel.
- * @param {unknown} err - Error from Inquirer
- * @returns {null}
- */
-const handleCancel = err => {
-  if (err?.name === 'ExitPromptError') return null;
-  throw err;
 };

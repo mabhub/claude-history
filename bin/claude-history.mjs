@@ -9,6 +9,7 @@ import { renameSession, setSessionColor, deleteSession } from '../src/actions.mj
 import { resumeWithCwdCheck } from '../src/resume-flow.mjs';
 import { runInteractive } from '../src/tui.mjs';
 import { cmdSkills } from '../src/skills-command.mjs';
+import { promptCancellable } from '../src/prompt-keys.mjs';
 import { pipeToViewer, hasGlow, formatSessionRow, resolveId, tintTitle, MISSING } from '../src/util.mjs';
 
 /**
@@ -102,10 +103,11 @@ const confirmFoundElsewhere = async (session, verb) => {
   console.error(pc.yellow(
     `⚠ Aucune conversation avec cet id dans le projet courant — trouvée dans ${session.encodedDir}.`,
   ));
-  return confirm({
+  const ok = await promptCancellable(confirm, {
     message: `${verb} ${session.sessionId.slice(0, 8)} hors du projet courant ?`,
     default: false,
-  }).catch(() => false);
+  });
+  return Boolean(ok);
 };
 
 const cmdLs = async () => {
@@ -169,10 +171,10 @@ const cmdRm = async (idOrPrefix, opts) => {
     return;
   }
   if (!opts.yes) {
-    const ok = await confirm({
+    const ok = await promptCancellable(confirm, {
       message: `Supprimer définitivement ${sessionId.slice(0, 8)} ?`,
       default: false,
-    }).catch(() => false);
+    });
     if (!ok) {
       console.log(pc.dim('Annulé.'));
       return;
