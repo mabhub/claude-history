@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTitlePrompt, cleanGeneratedTitle, detectLanguage, buildSystemPrompt } from './title-gen.mjs';
+import { buildTitlePrompt, cleanGeneratedTitle, detectLanguage, buildSystemPrompt, describeExitFailure } from './title-gen.mjs';
 
 test('buildTitlePrompt: carries the context (instructions live in the system prompt)', () => {
   assert.equal(buildTitlePrompt('Refactor the auth module'), 'Refactor the auth module');
@@ -74,4 +74,15 @@ test('cleanGeneratedTitle: a clean single-line title is returned as-is', () => {
 
 test('cleanGeneratedTitle: empty input yields empty string', () => {
   assert.equal(cleanGeneratedTitle('   \n  '), '');
+});
+
+test('describeExitFailure: appends the last stderr line as the reason', () => {
+  assert.equal(
+    describeExitFailure(1, "warning: something\nerror: unknown option '- x'\n"),
+    "claude a quitté avec le code 1 : error: unknown option '- x'",
+  );
+});
+
+test('describeExitFailure: falls back to the bare exit code without stderr', () => {
+  assert.equal(describeExitFailure(2, '  \n'), 'claude a quitté avec le code 2.');
 });

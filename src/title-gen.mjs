@@ -81,6 +81,21 @@ export const cleanGeneratedTitle = stdout => {
 };
 
 /**
+ * Build the error message for a failed `claude -p` run. The last non-empty
+ * stderr line carries the actual reason (e.g. "error: unknown option …");
+ * without it, failures were reported as a bare exit code.
+ * @param {number|null} code - Exit code
+ * @param {string} stderr - Captured stderr
+ * @returns {string} User-facing message
+ */
+export const describeExitFailure = (code, stderr) => {
+  const reason = stderr.split('\n').map(l => l.trim()).filter(Boolean).at(-1);
+  return reason
+    ? `claude a quitté avec le code ${code} : ${truncate(reason, 200)}`
+    : `claude a quitté avec le code ${code}.`;
+};
+
+/**
  * Build the context handed to the LLM: the latest away_summary when present,
  * otherwise the cleaned first user prompt. Truncated to bound the token cost.
  * The transcript itself is never sent — only this short excerpt.
@@ -98,7 +113,7 @@ export const buildTitleContext = async filePath => {
  * Generate a conversation title with `claude -p`. Builds the context (unless
  * one is supplied to reuse an already-read away_summary), prompts claude,
  * captures stdout, and returns a cleaned title. Rejects on a missing binary,
- * non-zero exit, timeout, or empty output.
+ * non-zero exit (with claude's stderr reason), timeout, or empty output.
  * @param {string} filePath - Path to the .jsonl transcript
  * @param {Object} [options]
  * @param {number} [options.timeoutMs=60000] - Kill claude after this long
@@ -134,13 +149,15 @@ export const generateTitle = async (filePath, { timeoutMs = DEFAULT_TIMEOUT_MS, 
     '--', prompt,
   ];
   return new Promise((resolve, reject) => {
-    const child = spawn('claude', args, { stdio: ['ignore', 'pipe', 'ignore'], cwd: os.tmpdir() });
+    const child = spawn('claude', args, { stdio: ['ignore', 'pipe', 'pipe'], cwd: os.tmpdir() });
     let stdout = '';
+    let stderr = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       reject(new Error('Délai dépassé.'));
     }, timeoutMs);
     child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
     child.on('error', err => {
       clearTimeout(timer);
       reject(err);
@@ -148,7 +165,7 @@ export const generateTitle = async (filePath, { timeoutMs = DEFAULT_TIMEOUT_MS, 
     child.on('close', code => {
       clearTimeout(timer);
       if (code !== 0) {
-        reject(new Error(`claude a quitté avec le code ${code}.`));
+        reject(new Error(describeExitFailure(code, stderr)));
         return;
       }
       const title = cleanGeneratedTitle(stdout);
