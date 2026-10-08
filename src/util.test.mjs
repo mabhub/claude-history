@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeCwd, resolveId, truncate, formatDate, formatSize, formatAge, formatSessionRow } from './util.mjs';
+import { encodeCwd, resolveId, truncate, formatDate, formatSize, formatAge, formatSessionRow, tintTitle } from './util.mjs';
 
 test('encodeCwd: replaces slashes', () => {
   assert.equal(encodeCwd('/home/you/claude'), '-home-you-claude');
@@ -130,4 +130,19 @@ test('formatDate: ISO string', () => {
 
 test('formatDate: invalid input', () => {
   assert.equal(formatDate('not-a-date'), '????-??-?? ??:??');
+});
+
+test('tintTitle: renders a known /color with Claude Code\'s RGB value', () => {
+  assert.equal(tintTitle('Titre', 'pink', true), '\x1b[38;2;196;102;134mTitre\x1b[39m');
+  assert.equal(tintTitle('Titre', 'blue', true), '\x1b[38;2;106;155;204mTitre\x1b[39m');
+});
+
+test('tintTitle: leaves the title untouched without a known color', () => {
+  assert.equal(tintTitle('Titre', null, true), 'Titre');
+  assert.equal(tintTitle('Titre', 'default', true), 'Titre');
+  assert.equal(tintTitle('Titre', 'turquoise', true), 'Titre');
+});
+
+test('tintTitle: leaves the title untouched when colors are disabled', () => {
+  assert.equal(tintTitle('Titre', 'pink', false), 'Titre');
 });

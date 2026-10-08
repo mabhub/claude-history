@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathExists, findSubProjects, findParentProjects, findSessionGlobally, readSessionCwd, readFirstUserPrompt } from './discover.mjs';
+import { pathExists, findSubProjects, findParentProjects, findSessionGlobally, readSessionCwd, readFirstUserPrompt, listSessions } from './discover.mjs';
 import { encodeCwd } from './util.mjs';
 
 test('pathExists: true for a real directory', async () => {
@@ -261,5 +261,42 @@ test('findParentProjects: flags ancestor as missing when its path is gone', asyn
     assert.equal(match.sessionCount, 1);
   } finally {
     await cleanup();
+  }
+});
+
+const writeLines = async (dir, sessionId, entries) => {
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(
+    path.join(dir, `${sessionId}.jsonl`),
+    entries.map(e => JSON.stringify(e)).join('\n') + '\n',
+  );
+};
+
+test('listSessions: exposes the latest agent-color from the tail', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-color-'));
+  try {
+    await writeLines(dir, 'aaaaaaaa-0000-0000-0000-000000000000', [
+      { type: 'user', message: { content: 'hi' }, timestamp: '2026-05-01T10:00:00Z' },
+      { type: 'agent-color', agentColor: 'red' },
+      { type: 'custom-title', customTitle: 'Titre' },
+      { type: 'agent-color', agentColor: 'yellow' },
+    ]);
+    const [session] = await listSessions(dir);
+    assert.equal(session.color, 'yellow');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('listSessions: color is null when no agent-color entry exists', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-color-'));
+  try {
+    await writeLines(dir, 'bbbbbbbb-0000-0000-0000-000000000000', [
+      { type: 'user', message: { content: 'hi' }, timestamp: '2026-05-01T10:00:00Z' },
+    ]);
+    const [session] = await listSessions(dir);
+    assert.equal(session.color, null);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
   }
 });

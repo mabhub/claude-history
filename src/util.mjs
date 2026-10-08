@@ -116,6 +116,34 @@ export const formatSize = bytes => {
 const AGE_WIDTH = 13;
 const SIZE_WIDTH = 8;
 
+// RGB values Claude Code paints a `/color` with: its `<name>_FOR_SUBAGENTS_ONLY`
+// theme keys, identical in the default dark and light themes.
+const SESSION_COLORS = {
+  red: [220, 38, 38],
+  blue: [106, 155, 204],
+  green: [22, 163, 74],
+  yellow: [202, 138, 4],
+  purple: [130, 125, 189],
+  orange: [217, 119, 87],
+  pink: [196, 102, 134],
+  cyan: [8, 145, 178],
+};
+
+/**
+ * Tint a title with the session's `/color`, in Claude Code's own RGB value.
+ * Any value outside the known palette (no color, a reset to default, …) leaves
+ * the title untouched.
+ * @param {string} title - Title text
+ * @param {string|null} color - Raw `agentColor` from the transcript
+ * @param {boolean} [enabled=pc.isColorSupported] - Whether to emit ANSI codes
+ * @returns {string} The title, wrapped in a 24-bit foreground color if known
+ */
+export const tintTitle = (title, color, enabled = pc.isColorSupported) => {
+  const rgb = Object.hasOwn(SESSION_COLORS, color) ? SESSION_COLORS[color] : null;
+  if (!rgb || !enabled) return title;
+  return `\x1b[38;2;${rgb.join(';')}m${title}\x1b[39m`;
+};
+
 /**
  * Render the shared columns of one session list row: short id, absolute date,
  * relative age, size, then title. Used by both the `ls` command and the TUI so
@@ -125,6 +153,7 @@ const SIZE_WIDTH = 8;
  * @param {Date} session.mtime - Last-activity time (drives date + age)
  * @param {number} session.size - Transcript byte size
  * @param {string} session.title - Resolved title
+ * @param {string|null} [session.color] - Raw `/color` value, tints the title
  * @param {number} [now=Date.now()] - Reference epoch for age (injectable for tests)
  * @returns {string} A colored, column-aligned row (no leading badge)
  */
@@ -133,7 +162,9 @@ export const formatSessionRow = (session, now = Date.now()) => {
   const date = pc.cyan(formatDate(session.mtime));
   const age = pc.dim(formatAge(session.mtime, now).padEnd(AGE_WIDTH));
   const size = pc.dim(formatSize(session.size).padStart(SIZE_WIDTH));
-  const title = session.title === '(sans titre)' ? pc.dim(session.title) : session.title;
+  const title = session.title === '(sans titre)'
+    ? pc.dim(session.title)
+    : tintTitle(session.title, session.color);
   return `${id}  ${date}  ${age}  ${size}  ${title}`;
 };
 

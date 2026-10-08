@@ -330,17 +330,18 @@ export const readFirstUserPrompt = async filePath => {
 
 /**
  * Read the tail of a .jsonl transcript (last TAIL_READ_BYTES) and extract the
- * latest custom-title / ai-title entries — both are always appended at the end
- * of the file by Claude Code.
+ * latest custom-title / ai-title / agent-color entries — all are appended
+ * (and periodically re-appended together) at the end of the file by Claude Code.
  * @param {string} filePath - Path to the .jsonl file
  * @param {number} fileSize - Total file size in bytes
- * @returns {Promise<{customTitle: string|null, aiTitle: string|null}>}
+ * @returns {Promise<{customTitle: string|null, aiTitle: string|null, agentColor: string|null}>}
  */
-const readTailTitles = async (filePath, fileSize) => {
+const readTailMeta = async (filePath, fileSize) => {
   let customTitle = null;
   let aiTitle = null;
+  let agentColor = null;
   const readSize = Math.min(TAIL_READ_BYTES, fileSize);
-  if (readSize === 0) return { customTitle, aiTitle };
+  if (readSize === 0) return { customTitle, aiTitle, agentColor };
 
   const fh = await fs.open(filePath, 'r');
   try {
@@ -358,12 +359,14 @@ const readTailTitles = async (filePath, fileSize) => {
         customTitle = entry.customTitle;
       } else if (entry.type === 'ai-title' && typeof entry.aiTitle === 'string') {
         aiTitle = entry.aiTitle;
+      } else if (entry.type === 'agent-color' && typeof entry.agentColor === 'string') {
+        agentColor = entry.agentColor;
       }
     }
   } finally {
     await fh.close();
   }
-  return { customTitle, aiTitle };
+  return { customTitle, aiTitle, agentColor };
 };
 
 const safeParse = line => {
@@ -410,7 +413,7 @@ export const listSessions = async dir => {
     const stat = await fs.stat(filePath);
     const [head, tail] = await Promise.all([
       readHead(filePath),
-      readTailTitles(filePath, stat.size),
+      readTailMeta(filePath, stat.size),
     ]);
     const cleanedPrompt = head.firstUserPrompt ? cleanUserText(head.firstUserPrompt) : '';
     const title =
@@ -426,6 +429,7 @@ export const listSessions = async dir => {
       firstTimestamp: head.firstTimestamp ? new Date(head.firstTimestamp) : stat.mtime,
       title,
       titleSource: tail.customTitle ? 'custom' : tail.aiTitle ? 'ai' : 'prompt',
+      color: tail.agentColor,
     };
   });
 
