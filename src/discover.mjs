@@ -332,16 +332,19 @@ export const readFirstUserPrompt = async filePath => {
  * Read the tail of a .jsonl transcript (last TAIL_READ_BYTES) and extract the
  * latest custom-title / ai-title / agent-color entries — all are appended
  * (and periodically re-appended together) at the end of the file by Claude Code.
+ * Also returns the latest entry `timestamp`: those metadata entries carry none,
+ * so it dates the last real activity even when they were written hours later.
  * @param {string} filePath - Path to the .jsonl file
  * @param {number} fileSize - Total file size in bytes
- * @returns {Promise<{customTitle: string|null, aiTitle: string|null, agentColor: string|null}>}
+ * @returns {Promise<{customTitle: string|null, aiTitle: string|null, agentColor: string|null, lastTimestamp: string|null}>}
  */
 const readTailMeta = async (filePath, fileSize) => {
   let customTitle = null;
   let aiTitle = null;
   let agentColor = null;
+  let lastTimestamp = null;
   const readSize = Math.min(TAIL_READ_BYTES, fileSize);
-  if (readSize === 0) return { customTitle, aiTitle, agentColor };
+  if (readSize === 0) return { customTitle, aiTitle, agentColor, lastTimestamp };
 
   const fh = await fs.open(filePath, 'r');
   try {
@@ -355,6 +358,7 @@ const readTailMeta = async (filePath, fileSize) => {
       if (!line) continue;
       const entry = safeParse(line);
       if (!entry) continue;
+      if (typeof entry.timestamp === 'string') lastTimestamp = entry.timestamp;
       if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') {
         customTitle = entry.customTitle;
       } else if (entry.type === 'ai-title' && typeof entry.aiTitle === 'string') {
@@ -366,7 +370,7 @@ const readTailMeta = async (filePath, fileSize) => {
   } finally {
     await fh.close();
   }
-  return { customTitle, aiTitle, agentColor };
+  return { customTitle, aiTitle, agentColor, lastTimestamp };
 };
 
 const safeParse = line => {
@@ -399,7 +403,7 @@ const extractUserText = entry => {
  * Head and tail of each file are read separately to avoid parsing the full
  * (potentially multi-MB) transcripts.
  * @param {string} dir - Directory containing .jsonl transcripts
- * @returns {Promise<Array<Object>>} Sessions sorted by mtime desc
+ * @returns {Promise<Array<Object>>} Sessions sorted by lastActivity desc
  */
 export const listSessions = async dir => {
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -424,7 +428,7 @@ export const listSessions = async dir => {
     return {
       sessionId,
       filePath,
-      mtime: stat.mtime,
+      lastActivity: parseDate(tail.lastTimestamp) ?? stat.mtime,
       size: stat.size,
       firstTimestamp: head.firstTimestamp ? new Date(head.firstTimestamp) : stat.mtime,
       title,
@@ -433,7 +437,17 @@ export const listSessions = async dir => {
     };
   });
 
-  return sessions.toSorted((a, b) => b.mtime - a.mtime);
+  return sessions.toSorted((a, b) => b.lastActivity - a.lastActivity);
+};
+
+/**
+ * Parse an ISO timestamp, or return null when absent or invalid.
+ * @param {string|null} iso - Timestamp string
+ * @returns {Date|null}
+ */
+const parseDate = iso => {
+  const date = iso ? new Date(iso) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
 };
 
 /**

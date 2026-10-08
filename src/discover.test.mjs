@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathExists, findSubProjects, findParentProjects, findSessionGlobally, readSessionCwd, readFirstUserPrompt, listSessions } from './discover.mjs';
 import { encodeCwd } from './util.mjs';
-import { setSessionColor } from './actions.mjs';
+import { setSessionColor, renameSession } from './actions.mjs';
 
 test('pathExists: true for a real directory', async () => {
   assert.equal(await pathExists(os.tmpdir()), true);
@@ -313,6 +313,54 @@ test('listSessions: reflects a color written by setSessionColor', async () => {
     await setSessionColor({ filePath: path.join(dir, `${sessionId}.jsonl`), sessionId, color: 'orange' });
     const [session] = await listSessions(dir);
     assert.equal(session.color, 'orange');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('listSessions: lastActivity is the last message timestamp, not bumped by title/color writes', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-activity-'));
+  try {
+    const sessionId = 'dddddddd-0000-0000-0000-000000000000';
+    const filePath = path.join(dir, `${sessionId}.jsonl`);
+    await writeLines(dir, sessionId, [
+      { type: 'user', message: { content: 'hi' }, timestamp: '2026-05-01T10:00:00Z' },
+      { type: 'system', subtype: 'turn_duration', timestamp: '2026-05-01T10:05:00Z' },
+      { type: 'last-prompt', lastPrompt: 'hi' },
+    ]);
+    await renameSession({ filePath, sessionId, title: 'Titre' });
+    await setSessionColor({ filePath, sessionId, color: 'pink' });
+    const [session] = await listSessions(dir);
+    assert.equal(session.lastActivity.toISOString(), '2026-05-01T10:05:00.000Z');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('listSessions: lastActivity falls back to the file mtime without any timestamp', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-activity-'));
+  try {
+    const sessionId = 'eeeeeeee-0000-0000-0000-000000000000';
+    await writeLines(dir, sessionId, [{ type: 'ai-title', aiTitle: 'Titre' }]);
+    const mtime = new Date('2026-03-02T08:00:00Z');
+    await fs.utimes(path.join(dir, `${sessionId}.jsonl`), mtime, mtime);
+    const [session] = await listSessions(dir);
+    assert.equal(session.lastActivity.toISOString(), mtime.toISOString());
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('listSessions: sorts by lastActivity, ignoring a fresher mtime', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-activity-'));
+  try {
+    const older = 'ffffffff-0000-0000-0000-000000000001';
+    const newer = 'ffffffff-0000-0000-0000-000000000002';
+    await writeLines(dir, newer, [{ type: 'user', message: { content: 'b' }, timestamp: '2026-05-02T10:00:00Z' }]);
+    // Written last, so its mtime is the freshest — yet its last message is older.
+    await writeLines(dir, older, [{ type: 'user', message: { content: 'a' }, timestamp: '2026-05-01T10:00:00Z' }]);
+    const sessions = await listSessions(dir);
+    assert.deepEqual(sessions.map(s => s.sessionId), [newer, older]);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

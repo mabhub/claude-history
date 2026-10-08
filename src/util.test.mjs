@@ -106,7 +106,7 @@ test('formatAge: future or invalid dates return a placeholder', () => {
 test('formatSessionRow: includes id, date, age, size and title in order', () => {
   const now = Date.UTC(2026, 6, 22, 12, 0, 0);
   const row = formatSessionRow(
-    { sessionId: 'a1b2c3d4-eeee-ffff', mtime: new Date(now - 2 * 3600 * 1000), size: 3481, title: 'Mon titre' },
+    { sessionId: 'a1b2c3d4-eeee-ffff', lastActivity: new Date(now - 2 * 3600 * 1000), size: 3481, title: 'Mon titre' },
     now,
   );
   // Assert on substrings so the check is agnostic to ANSI color codes.

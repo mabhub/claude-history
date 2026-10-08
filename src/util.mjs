@@ -68,7 +68,7 @@ const AGE_UNITS = [
  * Format a past date as a compact French relative age (e.g. "il y a 3j").
  * Future or invalid dates fall back to "?". The reference point defaults to
  * now but is injectable for deterministic tests.
- * @param {Date|string|number} input - Date input (typically a session mtime)
+ * @param {Date|string|number} input - Date input (typically a session's lastActivity)
  * @param {number} [now=Date.now()] - Reference epoch in ms
  * @returns {string} Relative age label
  */
@@ -168,7 +168,7 @@ export const tintTitle = (title, color, enabled = pc.isColorSupported) => {
  * their columns stay identical. The caller prefixes any leading badge itself.
  * @param {Object} session - A session from listSessions
  * @param {string} session.sessionId - Full UUID
- * @param {Date} session.mtime - Last-activity time (drives date + age)
+ * @param {Date} session.lastActivity - Last message time (drives date + age)
  * @param {number} session.size - Transcript byte size
  * @param {string} session.title - Resolved title
  * @param {string|null} [session.color] - Raw `/color` value, tints the title
@@ -177,8 +177,8 @@ export const tintTitle = (title, color, enabled = pc.isColorSupported) => {
  */
 export const formatSessionRow = (session, now = Date.now()) => {
   const id = pc.dim(session.sessionId.slice(0, 8));
-  const date = pc.cyan(formatDate(session.mtime));
-  const age = pc.dim(formatAge(session.mtime, now).padEnd(AGE_WIDTH));
+  const date = pc.cyan(formatDate(session.lastActivity));
+  const age = pc.dim(formatAge(session.lastActivity, now).padEnd(AGE_WIDTH));
   const size = pc.dim(formatSize(session.size).padStart(SIZE_WIDTH));
   const title = session.title === '(sans titre)'
     ? pc.dim(session.title)
