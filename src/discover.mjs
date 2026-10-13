@@ -12,7 +12,13 @@ const TAIL_READ_BYTES = 64 * 1024;
 // Only lines holding one of these get JSON-parsed (plus the few trailing ones
 // scanned for a timestamp). Claude Code serializes without spaces, and inside a
 // message body the quotes would be escaped, so this never skips a real entry.
-const TAIL_META_MARKERS = ['"type":"custom-title"', '"type":"ai-title"', '"type":"agent-color"'];
+const TAIL_META_MARKERS = [
+  '"type":"custom-title"',
+  '"type":"ai-title"',
+  '"type":"agent-color"',
+  '"usage":{',
+  '"subtype":"compact_boundary"',
+];
 const HEAD_MAX_LINES = 50;
 
 /**
@@ -341,14 +347,15 @@ export const readFirstUserPrompt = async filePath => {
  * periodically re-appends together near the end of the file.
  * Also returns the latest entry `timestamp`: those metadata entries carry none,
  * so it dates the last real activity even when they were written hours later.
+ * And the context size in tokens a resume would reload (see contextTokensOf).
  * Lines are scanned from the end, so the first match of each kind is the latest
- * and the scan stops once all four are known.
+ * and the scan stops once all five are known.
  * @param {string} filePath - Path to the .jsonl file
  * @param {number} fileSize - Total file size in bytes
- * @returns {Promise<{customTitle: string|null, aiTitle: string|null, agentColor: string|null, lastTimestamp: string|null}>}
+ * @returns {Promise<{customTitle: string|null, aiTitle: string|null, agentColor: string|null, lastTimestamp: string|null, contextTokens: number|null}>}
  */
 const readTailMeta = async (filePath, fileSize) => {
-  const meta = { customTitle: null, aiTitle: null, agentColor: null, lastTimestamp: null };
+  const meta = { customTitle: null, aiTitle: null, agentColor: null, lastTimestamp: null, contextTokens: null };
   const readSize = Math.min(TAIL_READ_BYTES, fileSize);
   if (readSize === 0) return meta;
 
@@ -377,10 +384,34 @@ const readTailMeta = async (filePath, fileSize) => {
       meta.aiTitle = entry.aiTitle;
     } else if (entry.type === 'agent-color' && meta.agentColor === null && typeof entry.agentColor === 'string') {
       meta.agentColor = entry.agentColor;
+    } else if (meta.contextTokens === null) {
+      meta.contextTokens = contextTokensOf(entry);
     }
     if (Object.values(meta).every(value => value !== null)) break;
   }
   return meta;
+};
+
+/**
+ * Context size, in tokens, as of a tail entry: the whole prompt of an assistant
+ * turn (fresh + cache-written + cache-read input) plus its output, which the
+ * next turn — or a resume — sends back. A compaction boundary carries the size
+ * it shrank the context to. Zero usage (synthetic messages) tells nothing.
+ * @param {Object} entry - Parsed JSONL line
+ * @returns {number|null} Token count, or null if the entry doesn't size the context
+ */
+const contextTokensOf = entry => {
+  if (entry.type === 'system' && entry.subtype === 'compact_boundary') {
+    const post = entry.compactMetadata?.postTokens;
+    return Number.isFinite(post) ? post : null;
+  }
+  const usage = entry.type === 'assistant' ? entry.message?.usage : null;
+  if (!usage) return null;
+  const total = (usage.input_tokens ?? 0)
+    + (usage.cache_creation_input_tokens ?? 0)
+    + (usage.cache_read_input_tokens ?? 0)
+    + (usage.output_tokens ?? 0);
+  return total > 0 ? total : null;
 };
 
 const safeParse = line => {
@@ -444,6 +475,7 @@ export const listSessions = async dir => {
       title,
       titleSource: tail.customTitle ? 'custom' : tail.aiTitle ? 'ai' : 'prompt',
       color: tail.agentColor,
+      contextTokens: tail.contextTokens,
     };
   });
 

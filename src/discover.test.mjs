@@ -391,3 +391,67 @@ test('listSessions: finds title and color re-appended well before the last 8 KB'
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+const usage = (input, creation, read, output) => ({
+  input_tokens: input,
+  cache_creation_input_tokens: creation,
+  cache_read_input_tokens: read,
+  output_tokens: output,
+});
+
+test('listSessions: contextTokens sums the last assistant usage', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-tokens-'));
+  try {
+    await writeLines(dir, '11111111-0000-0000-0000-000000000000', [
+      { type: 'user', message: { content: 'hi' }, timestamp: '2026-05-01T10:00:00Z' },
+      { type: 'assistant', message: { usage: usage(1, 1, 1, 1) }, timestamp: '2026-05-01T10:01:00Z' },
+      { type: 'assistant', message: { usage: usage(2, 2041, 338010, 968) }, timestamp: '2026-05-01T10:02:00Z' },
+      { type: 'custom-title', customTitle: 'Titre' },
+    ]);
+    const [session] = await listSessions(dir);
+    assert.equal(session.contextTokens, 341021);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('listSessions: contextTokens skips a zero-usage synthetic message', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-tokens-'));
+  try {
+    await writeLines(dir, '22222222-0000-0000-0000-000000000000', [
+      { type: 'assistant', message: { usage: usage(10, 0, 90, 0) }, timestamp: '2026-05-01T10:01:00Z' },
+      { type: 'assistant', message: { model: '<synthetic>', usage: usage(0, 0, 0, 0) }, timestamp: '2026-05-01T10:02:00Z' },
+    ]);
+    const [session] = await listSessions(dir);
+    assert.equal(session.contextTokens, 100);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('listSessions: contextTokens is the post-compaction size after a trailing compact', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-tokens-'));
+  try {
+    await writeLines(dir, '33333333-0000-0000-0000-000000000000', [
+      { type: 'assistant', message: { usage: usage(1, 0, 158000, 863) }, timestamp: '2026-05-01T10:01:00Z' },
+      { type: 'system', subtype: 'compact_boundary', compactMetadata: { preTokens: 158864, postTokens: 12856 } },
+    ]);
+    const [session] = await listSessions(dir);
+    assert.equal(session.contextTokens, 12856);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('listSessions: contextTokens is null without any usage in the tail', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-tokens-'));
+  try {
+    await writeLines(dir, '44444444-0000-0000-0000-000000000000', [
+      { type: 'user', message: { content: 'hi' }, timestamp: '2026-05-01T10:00:00Z' },
+    ]);
+    const [session] = await listSessions(dir);
+    assert.equal(session.contextTokens, null);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
