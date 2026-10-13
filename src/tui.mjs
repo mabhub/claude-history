@@ -83,9 +83,11 @@ const RECAP_MAX_LINES = 8;
  * @param {string|null} options.cwd - Resolved working directory, or null when orphan
  * @param {string} [options.displayLabel] - Override label shown in header (defaults to cwd)
  * @param {boolean} options.walkedUp - Whether we walked up to find sessions
- * @returns {Promise<void>}
+ * @param {boolean} [options.nested=false] - Entered from another folder's list,
+ *   so `q`/Escape go back to it instead of quitting
+ * @returns {Promise<'list'|'exit'>} 'list' when `q`/Escape left this level, 'exit' to quit the whole TUI
  */
-export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
+export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp, nested = false }) => {
   // Value the list cursor comes back to: the session just opened, or the
   // neighbour of one just deleted. Unset (first row) on entry.
   let cursor;
@@ -99,11 +101,11 @@ export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
     ]);
     if (sessions.length === 0 && subProjects.length === 0 && parentProjects.length === 0) {
       console.log(pc.yellow('Aucune conversation dans ce dossier.'));
-      return;
+      return BACK;
     }
 
     const headerLabel = displayLabel ?? cwd;
-    printHeader({ label: headerLabel, walkedUp, sessionCount: sessions.length, cwdMissing });
+    printHeader({ label: headerLabel, walkedUp, sessionCount: sessions.length, cwdMissing, nested });
 
     const pageSize = Math.max(5, (process.stdout.rows ?? 20) - 6);
     const choices = buildChoices({ sessions, subProjects, parentProjects });
@@ -113,11 +115,12 @@ export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
       pageSize,
       choices,
       default: cursor,
-      help: LIST_HELP,
+      help: [...LIST_HELP, ['q', nested ? 'retour' : 'quitter']],
       theme,
     }, listPrompt);
 
-    if (choice === null || choice === QUIT || choice === QUIT_VALUE) return;
+    if (choice === QUIT) return BACK;
+    if (choice === null || choice === QUIT_VALUE) return EXIT;
 
     if (choice.key === 'd') {
       cursor = await deleteFromList(sessions, choice.value);
@@ -127,29 +130,32 @@ export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
     if (choice.startsWith(NAV_PREFIX)) {
       const targetDir = choice.slice(NAV_PREFIX.length);
       const target = [...parentProjects, ...subProjects].find(p => p.dir === targetDir);
-      await runInteractive({
+      const outcome = await runInteractive({
         dir: target.dir,
         cwd: target.cwd,
         displayLabel: target.displayLabel,
         walkedUp: false,
+        nested: true,
       });
-      return;
+      if (outcome === EXIT) return EXIT;
+      cursor = choice;
+      continue;
     }
 
     const session = sessions.find(s => s.sessionId === choice);
     const outcome = await runActionMenu(session);
-    if (outcome === EXIT) return;
+    if (outcome === EXIT) return EXIT;
     cursor = outcome === DELETED ? neighbourId(sessions, choice) : choice;
     // BACK and DELETED fall through to the next loop iteration, which
     // re-fetches sessions (delete is reflected immediately).
   }
 };
 
-const printHeader = ({ label, walkedUp, sessionCount, cwdMissing }) => {
+const printHeader = ({ label, walkedUp, sessionCount, cwdMissing, nested }) => {
   const suffix = walkedUp ? pc.dim(` (remonté depuis ${process.cwd()})`) : '';
   const missing = cwdMissing ? `  ${MISSING.badge} ${MISSING.label}` : '';
   console.log(`\nConversations dans ${pc.bold(label)}${suffix}  ${pc.dim(`(${sessionCount})`)}${missing}`);
-  console.log(pc.dim(`Légende : ${LEGEND}  ·  ←→ couleur  ·  d supprimer  ·  q/Échap quitter`));
+  console.log(pc.dim(`Légende : ${LEGEND}  ·  ←→ couleur  ·  d supprimer  ·  q/Échap ${nested ? 'retour' : 'quitter'}`));
   console.log('');
 };
 
