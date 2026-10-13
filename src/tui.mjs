@@ -4,7 +4,7 @@ import pc from 'picocolors';
 import { listSessions, findSubProjects, findParentProjects, pathExists } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
 import { renameSession, setSessionColor, deleteSession } from './actions.mjs';
-import { resumeWithCwdCheck } from './resume-flow.mjs';
+import { resumeWithChecks } from './resume-flow.mjs';
 import { readLatestAwaySummary } from './away-summary.mjs';
 import { generateTitle } from './title-gen.mjs';
 import { listPrompt } from './list-prompt.mjs';
@@ -333,7 +333,7 @@ const deleteFromList = async (sessions, sessionId) => {
 };
 
 const resumeAction = async session => {
-  const outcome = await resumeWithCwdCheck({ sessionId: session.sessionId, filePath: session.filePath });
+  const outcome = await resumeWithChecks({ sessionId: session.sessionId, filePath: session.filePath });
   // 'unavailable' can't happen in the TUI (it implies a TTY). 'cancelled' or a
   // failed mkdir returns to the list; a successful resume never returns here.
   return outcome === 'cancelled' ? BACK : EXIT;

@@ -455,3 +455,50 @@ test('listSessions: contextTokens is null without any usage in the tail', async 
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+const cachedUsage = (read, { oneHour = 0, fiveMinutes = 0 }) => ({
+  ...usage(1, oneHour + fiveMinutes, read, 10),
+  cache_creation: { ephemeral_1h_input_tokens: oneHour, ephemeral_5m_input_tokens: fiveMinutes },
+});
+
+test('listSessions: cacheExpiresAt is the last turn plus its 1 h cache TTL', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-cache-'));
+  try {
+    await writeLines(dir, '55555555-0000-0000-0000-000000000000', [
+      { type: 'assistant', message: { usage: cachedUsage(9000, { oneHour: 120 }) }, timestamp: '2026-05-01T10:02:00Z' },
+      { type: 'custom-title', customTitle: 'Titre' },
+    ]);
+    const [session] = await listSessions(dir);
+    assert.equal(session.cacheExpiresAt.toISOString(), '2026-05-01T11:02:00.000Z');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('listSessions: cacheExpiresAt uses 5 min without a 1 h cache write', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-cache-'));
+  try {
+    await writeLines(dir, '66666666-0000-0000-0000-000000000000', [
+      { type: 'assistant', message: { usage: cachedUsage(9000, { fiveMinutes: 120 }) }, timestamp: '2026-05-01T10:02:00Z' },
+    ]);
+    const [session] = await listSessions(dir);
+    assert.equal(session.cacheExpiresAt.toISOString(), '2026-05-01T10:07:00.000Z');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('listSessions: cacheExpiresAt is null after a trailing compact', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clh-cache-'));
+  try {
+    await writeLines(dir, '77777777-0000-0000-0000-000000000000', [
+      { type: 'assistant', message: { usage: cachedUsage(9000, { oneHour: 120 }) }, timestamp: '2026-05-01T10:02:00Z' },
+      { type: 'system', subtype: 'compact_boundary', compactMetadata: { postTokens: 12856 } },
+    ]);
+    const [session] = await listSessions(dir);
+    assert.equal(session.contextTokens, 12856);
+    assert.equal(session.cacheExpiresAt, null);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

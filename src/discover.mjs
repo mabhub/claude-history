@@ -347,15 +347,16 @@ export const readFirstUserPrompt = async filePath => {
  * periodically re-appends together near the end of the file.
  * Also returns the latest entry `timestamp`: those metadata entries carry none,
  * so it dates the last real activity even when they were written hours later.
- * And the context size in tokens a resume would reload (see contextTokensOf).
+ * And the context a resume would reload: its size and how long it stays
+ * cached (see contextOf).
  * Lines are scanned from the end, so the first match of each kind is the latest
  * and the scan stops once all five are known.
  * @param {string} filePath - Path to the .jsonl file
  * @param {number} fileSize - Total file size in bytes
- * @returns {Promise<{customTitle: string|null, aiTitle: string|null, agentColor: string|null, lastTimestamp: string|null, contextTokens: number|null}>}
+ * @returns {Promise<{customTitle: string|null, aiTitle: string|null, agentColor: string|null, lastTimestamp: string|null, context: {tokens: number, cacheExpiresAt: Date|null}|null}>}
  */
 const readTailMeta = async (filePath, fileSize) => {
-  const meta = { customTitle: null, aiTitle: null, agentColor: null, lastTimestamp: null, contextTokens: null };
+  const meta = { customTitle: null, aiTitle: null, agentColor: null, lastTimestamp: null, context: null };
   const readSize = Math.min(TAIL_READ_BYTES, fileSize);
   if (readSize === 0) return meta;
 
@@ -384,34 +385,45 @@ const readTailMeta = async (filePath, fileSize) => {
       meta.aiTitle = entry.aiTitle;
     } else if (entry.type === 'agent-color' && meta.agentColor === null && typeof entry.agentColor === 'string') {
       meta.agentColor = entry.agentColor;
-    } else if (meta.contextTokens === null) {
-      meta.contextTokens = contextTokensOf(entry);
+    } else if (meta.context === null) {
+      meta.context = contextOf(entry);
     }
     if (Object.values(meta).every(value => value !== null)) break;
   }
   return meta;
 };
 
+// Prompt-cache lifetimes. Claude Code writes the 1 h cache when the account
+// allows it, else the 5 min one; each turn's usage tells which it wrote.
+const CACHE_TTL_MS = { oneHour: 60 * 60 * 1000, fiveMinutes: 5 * 60 * 1000 };
+
 /**
- * Context size, in tokens, as of a tail entry: the whole prompt of an assistant
- * turn (fresh + cache-written + cache-read input) plus its output, which the
- * next turn — or a resume — sends back. A compaction boundary carries the size
- * it shrank the context to. Zero usage (synthetic messages) tells nothing.
+ * Context as of a tail entry. Its size, in tokens: the whole prompt of an
+ * assistant turn (fresh + cache-written + cache-read input) plus its output,
+ * which the next turn — or a resume — sends back. A compaction boundary
+ * carries the size it shrank the context to. Zero usage (synthetic messages)
+ * tells nothing.
+ * Its cache expiry: the turn's time plus the TTL it wrote the cache with
+ * (5 min unless it wrote 1 h entries). A compacted context was never sent,
+ * so nothing of it is cached: null.
  * @param {Object} entry - Parsed JSONL line
- * @returns {number|null} Token count, or null if the entry doesn't size the context
+ * @returns {{tokens: number, cacheExpiresAt: Date|null}|null} Null if the entry doesn't size the context
  */
-const contextTokensOf = entry => {
+const contextOf = entry => {
   if (entry.type === 'system' && entry.subtype === 'compact_boundary') {
     const post = entry.compactMetadata?.postTokens;
-    return Number.isFinite(post) ? post : null;
+    return Number.isFinite(post) ? { tokens: post, cacheExpiresAt: null } : null;
   }
   const usage = entry.type === 'assistant' ? entry.message?.usage : null;
   if (!usage) return null;
-  const total = (usage.input_tokens ?? 0)
+  const tokens = (usage.input_tokens ?? 0)
     + (usage.cache_creation_input_tokens ?? 0)
     + (usage.cache_read_input_tokens ?? 0)
     + (usage.output_tokens ?? 0);
-  return total > 0 ? total : null;
+  if (tokens === 0) return null;
+  const ttl = usage.cache_creation?.ephemeral_1h_input_tokens > 0 ? CACHE_TTL_MS.oneHour : CACHE_TTL_MS.fiveMinutes;
+  const at = parseDate(entry.timestamp);
+  return { tokens, cacheExpiresAt: at ? new Date(at.getTime() + ttl) : null };
 };
 
 const safeParse = line => {
@@ -437,6 +449,18 @@ const extractUserText = entry => {
     if (textParts.length > 0) return textParts.join(' ');
   }
   return null;
+};
+
+/**
+ * Read one transcript's context as listSessions does: its size in tokens and
+ * when its prompt cache expires. For callers holding only a file path.
+ * @param {string} filePath - Path to the .jsonl transcript
+ * @returns {Promise<{contextTokens: number|null, cacheExpiresAt: Date|null}>}
+ */
+export const readSessionContext = async filePath => {
+  const { size } = await fs.stat(filePath);
+  const { context } = await readTailMeta(filePath, size);
+  return { contextTokens: context?.tokens ?? null, cacheExpiresAt: context?.cacheExpiresAt ?? null };
 };
 
 /**
@@ -474,7 +498,8 @@ export const listSessions = async dir => {
       title,
       titleSource: tail.customTitle ? 'custom' : tail.aiTitle ? 'ai' : 'prompt',
       color: tail.agentColor,
-      contextTokens: tail.contextTokens,
+      contextTokens: tail.context?.tokens ?? null,
+      cacheExpiresAt: tail.context?.cacheExpiresAt ?? null,
     };
   });
 

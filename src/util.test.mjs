@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeCwd, resolveId, truncate, formatDate, formatTokens, formatAge, formatSessionRow, tintTitle, tintTokens, visibleWidth, highlightRow, cycleColor } from './util.mjs';
+import { encodeCwd, resolveId, truncate, formatDate, formatTokens, formatAge, formatSessionRow, tintTitle, tintTokens, visibleWidth, highlightRow, cycleColor, cacheStatus } from './util.mjs';
 
 test('encodeCwd: replaces slashes', () => {
   assert.equal(encodeCwd('/home/you/claude'), '-home-you-claude');
@@ -185,4 +185,29 @@ test('highlightRow: paints a background padded to just under the width', () => {
 
 test('highlightRow: no padding when the row is already wider', () => {
   assert.equal(visibleWidth(highlightRow('abcdef', [0, 0, 0], 4)), 6);
+});
+
+test('cacheStatus: warm until the expiry, with the minutes left', () => {
+  const now = Date.parse('2026-05-01T10:00:00Z');
+  const session = { contextTokens: 182000, cacheExpiresAt: new Date('2026-05-01T10:47:30Z') };
+  assert.deepEqual(cacheStatus(session, now), { warm: true, label: 'cache chaud · 48 min restantes' });
+});
+
+test('cacheStatus: cold past the expiry, with the tokens to reload', () => {
+  const now = Date.parse('2026-05-01T13:00:00Z');
+  const session = { contextTokens: 182000, cacheExpiresAt: new Date('2026-05-01T10:00:00Z') };
+  assert.deepEqual(cacheStatus(session, now), { warm: false, label: 'cache expiré · 182K tok à recharger' });
+});
+
+test('cacheStatus: singular for the last minute', () => {
+  const now = Date.parse('2026-05-01T10:00:00Z');
+  const session = { contextTokens: 1000, cacheExpiresAt: new Date('2026-05-01T10:00:30Z') };
+  assert.equal(cacheStatus(session, now).label, 'cache chaud · 1 min restante');
+});
+
+test('cacheStatus: cold when the expiry or the size is unknown', () => {
+  assert.deepEqual(
+    cacheStatus({ contextTokens: null, cacheExpiresAt: null }),
+    { warm: false, label: 'cache expiré · taille inconnue' },
+  );
 });

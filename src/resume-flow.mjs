@@ -3,9 +3,41 @@ import input from '@inquirer/input';
 import pc from 'picocolors';
 import { resolveCwdState } from './resume-cwd.mjs';
 import { resumeSession, ensureDir } from './actions.mjs';
-import { encodeCwd } from './util.mjs';
+import { readSessionContext } from './discover.mjs';
+import { encodeCwd, formatAge, formatTokens, cacheStatus } from './util.mjs';
 import { promptCancellable } from './prompt-keys.mjs';
 import { confirmMenu } from './confirm-menu.mjs';
+
+/**
+ * Warning shown before resuming a session whose context left the prompt cache:
+ * since when, and how many tokens the resume sends back uncached.
+ * @param {{contextTokens: number|null, cacheExpiresAt: Date|null}} context - From readSessionContext
+ * @param {number} [now=Date.now()] - Reference epoch (injectable for tests)
+ * @returns {string|null} The warning, or null while the cache is warm
+ */
+export const coldResumeWarning = (context, now = Date.now()) => {
+  if (cacheStatus(context, now).warm) return null;
+  const since = context.cacheExpiresAt ? ` (expiré ${formatAge(context.cacheExpiresAt, now)})` : '';
+  const size = Number.isFinite(context.contextTokens)
+    ? `${formatTokens(context.contextTokens)} à recharger`
+    : 'taille inconnue';
+  return `⚠ Cette conversation n'est plus en cache${since}.\n`
+    + `  La reprendre renvoie tout son contexte au prix fort : ${size}.`;
+};
+
+/**
+ * Before a resume, warn when the context is no longer cached and ask to
+ * confirm. Without a TTY there is no one to ask: the resume goes ahead.
+ * @param {string} filePath - Path to the session's .jsonl transcript
+ * @returns {Promise<boolean>} Whether to go on with the resume
+ */
+const confirmColdResume = async filePath => {
+  if (!process.stdin.isTTY) return true;
+  const warning = coldResumeWarning(await readSessionContext(filePath));
+  if (!warning) return true;
+  console.error(pc.yellow(warning));
+  return confirmMenu('Reprendre quand même ?');
+};
 
 /**
  * Recreate `cwd` (mkdir -p) then resume in it. Surfaces a mkdir failure as a
@@ -80,16 +112,19 @@ const promptUnknown = async (sessionId, { encodedDir, guess }) => {
 };
 
 /**
- * Resume a session, checking its recorded cwd first. When the cwd is gone or
- * unknown, drive an interactive recovery menu (recreate / enter path / cancel).
- * Without a TTY there is nothing to prompt: returns 'unavailable' so the caller
- * can print guidance and exit non-zero.
+ * Resume a session after two checks. When its context is no longer cached,
+ * warn of the cost and ask to confirm (see confirmColdResume). Then check its
+ * recorded cwd: when it is gone or unknown, drive an interactive recovery menu
+ * (recreate / enter path / cancel). Without a TTY there is nothing to prompt:
+ * a missing cwd returns 'unavailable' so the caller can print guidance and
+ * exit non-zero.
  * @param {Object} options
  * @param {string} options.sessionId - Full session UUID
  * @param {string} options.filePath - Path to the session's .jsonl transcript
  * @returns {Promise<'resumed'|'cancelled'|'unavailable'>}
  */
-export const resumeWithCwdCheck = async ({ sessionId, filePath }) => {
+export const resumeWithChecks = async ({ sessionId, filePath }) => {
+  if (!(await confirmColdResume(filePath))) return 'cancelled';
   const state = await resolveCwdState(filePath);
   if (state.status === 'ok') {
     await resumeSession({ sessionId, cwd: state.recordedCwd });

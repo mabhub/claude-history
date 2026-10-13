@@ -99,6 +99,22 @@ export const formatTokens = tokens => {
   return `${rounded}${unit[0]} tok`;
 };
 
+/**
+ * Whether a session's context is still in the prompt cache, and a short label
+ * saying for how long, or what a resume reloads once it is not. Unknown
+ * expiry counts as expired: resuming then pays the full context.
+ * @param {{contextTokens: number|null, cacheExpiresAt: Date|null}} session - A session from listSessions
+ * @param {number} [now=Date.now()] - Reference epoch (injectable for tests)
+ * @returns {{warm: boolean, label: string}}
+ */
+export const cacheStatus = (session, now = Date.now()) => {
+  const left = session.cacheExpiresAt ? session.cacheExpiresAt.getTime() - now : 0;
+  const minutes = Math.ceil(left / 60000);
+  if (left > 0) return { warm: true, label: `cache chaud · ${minutes} min restante${minutes > 1 ? 's' : ''}` };
+  const size = Number.isFinite(session.contextTokens) ? `${formatTokens(session.contextTokens)} à recharger` : 'taille inconnue';
+  return { warm: false, label: `cache expiré · ${size}` };
+};
+
 // Fixed display widths so age and tokens line up into columns across rows. The
 // raw (uncolored) strings are padded before coloring — ANSI codes would break
 // padEnd/padStart length math.

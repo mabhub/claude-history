@@ -5,7 +5,7 @@ import pc from 'picocolors';
 import { findProjectDir, listSessions, listSessionIds, findSubProjects, findSessionGlobally, pathExists } from '../src/discover.mjs';
 import { renderTranscript } from '../src/transcript.mjs';
 import { renameSession, setSessionColor, deleteSession } from '../src/actions.mjs';
-import { resumeWithCwdCheck } from '../src/resume-flow.mjs';
+import { resumeWithChecks } from '../src/resume-flow.mjs';
 import { runInteractive } from '../src/tui.mjs';
 import { cmdSkills } from '../src/skills-command.mjs';
 import { confirmMenu } from '../src/confirm-menu.mjs';
@@ -181,7 +181,7 @@ const cmdResume = async idOrPrefix => {
     console.log(pc.dim('Annulé.'));
     return;
   }
-  const outcome = await resumeWithCwdCheck({ sessionId: session.sessionId, filePath: session.filePath });
+  const outcome = await resumeWithChecks({ sessionId: session.sessionId, filePath: session.filePath });
   if (outcome === 'unavailable') {
     console.error(pc.yellow(
       '⚠ Dossier d\'origine introuvable et pas de terminal interactif.\n'
