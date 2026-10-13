@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeCwd, resolveId, truncate, formatDate, formatSize, formatAge, formatSessionRow, tintTitle, cycleColor } from './util.mjs';
+import { encodeCwd, resolveId, truncate, formatDate, formatTokens, formatAge, formatSessionRow, tintTitle, tintTokens, cycleColor } from './util.mjs';
 
 test('encodeCwd: replaces slashes', () => {
   assert.equal(encodeCwd('/home/you/claude'), '-home-you-claude');
@@ -61,28 +61,6 @@ test('truncate: empty string', () => {
   assert.equal(truncate('', 10), '');
 });
 
-test('formatSize: bytes below 1 KB stay in B with no decimal', () => {
-  assert.equal(formatSize(0), '0 B');
-  assert.equal(formatSize(812), '812 B');
-});
-
-test('formatSize: scales to KB/MB and keeps one decimal only when needed', () => {
-  assert.equal(formatSize(1024), '1 KB');
-  assert.equal(formatSize(1536), '1.5 KB');
-  assert.equal(formatSize(3 * 1024 * 1024), '3 MB');
-});
-
-test('formatSize: a value just under a threshold promotes to the next unit', () => {
-  // 1048575 B rounds to 1024.0 KB in-unit — should read 1 MB instead.
-  assert.equal(formatSize(1024 * 1024 - 1), '1 MB');
-  assert.equal(formatSize(1024 * 1024 * 1024 - 1), '1 GB');
-});
-
-test('formatSize: invalid input returns a placeholder', () => {
-  assert.equal(formatSize(-1), '?');
-  assert.equal(formatSize(NaN), '?');
-});
-
 test('formatAge: picks the right unit for each elapsed range', () => {
   const now = Date.UTC(2026, 6, 22, 12, 0, 0);
   const ago = seconds => new Date(now - seconds * 1000);
@@ -103,20 +81,46 @@ test('formatAge: future or invalid dates return a placeholder', () => {
   assert.equal(formatAge('not-a-date', now), '?');
 });
 
-test('formatSessionRow: includes id, date, age, size and title in order', () => {
+test('formatTokens: units, rounding and placeholder', () => {
+  assert.equal(formatTokens(812), '812 tok');
+  assert.equal(formatTokens(4249), '4.2K tok');
+  assert.equal(formatTokens(48_400), '48K tok');
+  assert.equal(formatTokens(341_021), '341K tok');
+  assert.equal(formatTokens(999_600), '1M tok');
+  assert.equal(formatTokens(1_234_567), '1.2M tok');
+  assert.equal(formatTokens(null), '?');
+});
+
+test('tintTokens: picks the claude-statusline context color for each threshold', () => {
+  const rgbOf = tokens => tintTokens('x', tokens, true).match(/38;2;([\d;]+)m/)?.[1];
+  assert.equal(rgbOf(0), '30;142;62');
+  assert.equal(rgbOf(60_999), '30;142;62');
+  assert.equal(rgbOf(61_000), '76;175;80');
+  assert.equal(rgbOf(175_000), '255;160;0');
+  assert.equal(rgbOf(200_999), '255;109;0');
+  assert.equal(rgbOf(341_021), '194;24;91');
+  assert.equal(rgbOf(401_000), '123;31;162');
+});
+
+test('tintTokens: no palette color for an unknown count, plain text when disabled', () => {
+  assert.doesNotMatch(tintTokens('?', null, true), /38;2;/);
+  assert.equal(tintTokens('48K tok', 48_000, false), '48K tok');
+});
+
+test('formatSessionRow: includes id, date, age, tokens and title in order', () => {
   const now = Date.UTC(2026, 6, 22, 12, 0, 0);
   const row = formatSessionRow(
-    { sessionId: 'a1b2c3d4-eeee-ffff', lastActivity: new Date(now - 2 * 3600 * 1000), size: 3481, title: 'Mon titre' },
+    { sessionId: 'a1b2c3d4-eeee-ffff', lastActivity: new Date(now - 2 * 3600 * 1000), contextTokens: 3481, title: 'Mon titre' },
     now,
   );
   // Assert on substrings so the check is agnostic to ANSI color codes.
   assert.match(row, /a1b2c3d4/);
   assert.match(row, /2026-07-22/);
   assert.match(row, /il y a 2h/);
-  assert.match(row, /3\.4 KB/);
+  assert.match(row, /3\.5K tok/);
   assert.match(row, /Mon titre/);
-  // Ordering: id before date before age before size before title.
-  const order = ['a1b2c3d4', '2026-07-22', 'il y a 2h', '3.4 KB', 'Mon titre']
+  // Ordering: id before date before age before tokens before title.
+  const order = ['a1b2c3d4', '2026-07-22', 'il y a 2h', '3.5K tok', 'Mon titre']
     .map(part => row.indexOf(part));
   assert.deepEqual(order, [...order].toSorted((a, b) => a - b));
 });

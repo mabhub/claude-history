@@ -83,38 +83,26 @@ export const formatAge = (input, now = Date.now()) => {
 };
 
 /**
- * Format a byte count as a compact human-readable size (B, KB, MB, GB). Uses
- * 1024-based units and drops the decimal for whole numbers and for bytes.
- * @param {number} bytes - Size in bytes
- * @returns {string} e.g. "812 B", "3.4 KB", "12 MB"
+ * Format a token count compactly: "812 tok", "4.2K tok", "341K tok", "1.2M tok".
+ * One decimal only below 10 of a unit, where it still carries information.
+ * @param {number|null} tokens - Token count
+ * @returns {string} Formatted count, or "?" when unknown
  */
-export const formatSize = bytes => {
-  if (!Number.isFinite(bytes) || bytes < 0) return '?';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  // A value just under the next threshold (e.g. 1048575 B) rounds up to 1024.0
-  // in its unit — promote it one unit so it reads "1 MB", not "1024.0 KB".
-  if (unit < units.length - 1 && Number(value.toFixed(1)) >= 1024) {
-    value /= 1024;
-    unit += 1;
-  }
-  // Round once, then drop the decimal for whole numbers (incl. a promoted 1.0)
-  // and for the base byte unit.
-  const oneDp = Number(value.toFixed(1));
-  const rounded = unit === 0 || Number.isInteger(oneDp) ? String(oneDp) : oneDp.toFixed(1);
-  return `${rounded} ${units[unit]}`;
+export const formatTokens = tokens => {
+  if (!Number.isFinite(tokens) || tokens < 0) return '?';
+  if (tokens < 1000) return `${tokens} tok`;
+  // Round in K first, so 999_600 promotes to "1M" instead of reading "1000K".
+  const unit = Math.round(tokens / 1000) < 1000 ? ['K', 1e3] : ['M', 1e6];
+  const value = tokens / unit[1];
+  const rounded = value < 10 ? Number(value.toFixed(1)) : Math.round(value);
+  return `${rounded}${unit[0]} tok`;
 };
 
-// Fixed display widths so age and size line up into columns across rows. The
+// Fixed display widths so age and tokens line up into columns across rows. The
 // raw (uncolored) strings are padded before coloring — ANSI codes would break
 // padEnd/padStart length math.
 const AGE_WIDTH = 13;
-const SIZE_WIDTH = 8;
+const TOKENS_WIDTH = 8;
 
 // RGB values Claude Code paints a `/color` with: its `<name>_FOR_SUBAGENTS_ONLY`
 // theme keys, identical in the default dark and light themes.
@@ -162,14 +150,42 @@ export const tintTitle = (title, color, enabled = pc.isColorSupported) => {
   return `\x1b[38;2;${rgb.join(';')}m${title}\x1b[39m`;
 };
 
+// Context-size palette of claude-statusline's context gauge (its QUOTA_COLORS
+// and CTX_THRESHOLDS): dark green → green → light green → yellow → amber →
+// orange → red → crimson → violet. Thresholds are the upper bound, in thousands
+// of tokens, of each level but the last: /compact is advised from 150-200K,
+// turns past 200K carry most of the cost, past 400K one costs ~3× a 100-200K one.
+const CONTEXT_COLORS = [
+  [30, 142, 62], [76, 175, 80], [139, 195, 74], [240, 200, 0], [255, 160, 0],
+  [255, 109, 0], [229, 57, 53], [194, 24, 91], [123, 31, 162],
+];
+const CONTEXT_THRESHOLDS_K = [60, 90, 120, 150, 175, 200, 300, 400];
+
+/**
+ * Tint text with claude-statusline's color for a context size, so the cost of
+ * a cold resume stands out at a glance.
+ * @param {string} text - Text to color (already padded)
+ * @param {number|null} tokens - Context size in tokens
+ * @param {boolean} [enabled=pc.isColorSupported] - Whether to emit ANSI codes
+ * @returns {string} The text in a 24-bit foreground color, dimmed when the size is unknown
+ */
+export const tintTokens = (text, tokens, enabled = pc.isColorSupported) => {
+  if (!enabled) return text;
+  if (!Number.isFinite(tokens)) return pc.dim(text);
+  const thousands = Math.floor(tokens / 1000);
+  const level = CONTEXT_THRESHOLDS_K.findIndex(max => thousands <= max);
+  const rgb = CONTEXT_COLORS[level === -1 ? CONTEXT_COLORS.length - 1 : level];
+  return `\x1b[38;2;${rgb.join(';')}m${text}\x1b[39m`;
+};
+
 /**
  * Render the shared columns of one session list row: short id, absolute date,
- * relative age, size, then title. Used by both the `ls` command and the TUI so
+ * relative age, context size in tokens, then title. Used by both the `ls` command and the TUI so
  * their columns stay identical. The caller prefixes any leading badge itself.
  * @param {Object} session - A session from listSessions
  * @param {string} session.sessionId - Full UUID
  * @param {Date} session.lastActivity - Last message time (drives date + age)
- * @param {number} session.size - Transcript byte size
+ * @param {number|null} session.contextTokens - Context a resume reloads, null if unknown
  * @param {string} session.title - Resolved title
  * @param {string|null} [session.color] - Raw `/color` value, tints the title
  * @param {number} [now=Date.now()] - Reference epoch for age (injectable for tests)
@@ -179,11 +195,11 @@ export const formatSessionRow = (session, now = Date.now()) => {
   const id = pc.dim(session.sessionId.slice(0, 8));
   const date = pc.cyan(formatDate(session.lastActivity));
   const age = pc.dim(formatAge(session.lastActivity, now).padEnd(AGE_WIDTH));
-  const size = pc.dim(formatSize(session.size).padStart(SIZE_WIDTH));
+  const tokens = tintTokens(formatTokens(session.contextTokens).padStart(TOKENS_WIDTH), session.contextTokens);
   const title = session.title === '(sans titre)'
     ? pc.dim(session.title)
     : tintTitle(session.title, session.color);
-  return `${id}  ${date}  ${age}  ${size}  ${title}`;
+  return `${id}  ${date}  ${age}  ${tokens}  ${title}`;
 };
 
 /**
