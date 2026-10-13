@@ -153,6 +153,13 @@ re-enters the TUI for that sub-directory.
   (or `less -R`).
 - `clh show <id> --raw` always uses the regular pager (raw JSON, not markdown).
 
+## Terminal theme
+
+The TUI paints the highlighted conversation on a tinted background, blue-grey
+on dark terminals and pale blue on light ones. It asks the terminal for its
+background color (OSC 11), falls back to GNOME's light/dark preference, then
+to light. Set `CLH_THEME=dark` or `CLH_THEME=light` to force it.
+
 ## Tests
 
 ```bash

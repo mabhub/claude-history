@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeCwd, resolveId, truncate, formatDate, formatTokens, formatAge, formatSessionRow, tintTitle, tintTokens, cycleColor } from './util.mjs';
+import { encodeCwd, resolveId, truncate, formatDate, formatTokens, formatAge, formatSessionRow, tintTitle, tintTokens, visibleWidth, highlightRow, cycleColor } from './util.mjs';
 
 test('encodeCwd: replaces slashes', () => {
   assert.equal(encodeCwd('/home/you/claude'), '-home-you-claude');
@@ -167,4 +167,22 @@ test('cycleColor: a missing or unknown color starts from "default"', () => {
   assert.equal(cycleColor(null, 1), 'red');
   assert.equal(cycleColor(undefined, -1), 'cyan');
   assert.equal(cycleColor('turquoise', 1), 'red');
+});
+
+test('visibleWidth: ignores ANSI codes, counts wide characters twice', () => {
+  assert.equal(visibleWidth('\x1b[2mabc\x1b[22m'), 3);
+  assert.equal(visibleWidth('été'), 3);
+  assert.equal(visibleWidth('日本'), 4);
+  assert.equal(visibleWidth('🛠️ x'), 4);
+});
+
+test('highlightRow: paints a background padded to just under the width', () => {
+  const row = highlightRow('\x1b[36mab\x1b[39m', [30, 45, 70], 10);
+  assert.ok(row.startsWith('\x1b[48;2;30;45;70m'));
+  assert.ok(row.endsWith('\x1b[49m'));
+  assert.equal(visibleWidth(row), 9);
+});
+
+test('highlightRow: no padding when the row is already wider', () => {
+  assert.equal(visibleWidth(highlightRow('abcdef', [0, 0, 0], 4)), 6);
 });

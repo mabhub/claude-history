@@ -1,6 +1,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
+import { stripVTControlCharacters } from 'node:util';
 import pc from 'picocolors';
 
 /**
@@ -176,6 +177,40 @@ export const tintTokens = (text, tokens, enabled = pc.isColorSupported) => {
   const level = CONTEXT_THRESHOLDS_K.findIndex(max => thousands <= max);
   const rgb = CONTEXT_COLORS[level === -1 ? CONTEXT_COLORS.length - 1 : level];
   return `\x1b[38;2;${rgb.join(';')}m${text}\x1b[39m`;
+};
+
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+// Emoji and East Asian wide/fullwidth ranges take two terminal columns.
+const WIDE = /\p{Extended_Pictographic}|[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/u;
+
+/**
+ * Number of terminal columns a string takes, ANSI codes excluded. Counts
+ * grapheme clusters (so combining accents add nothing) and wide characters as
+ * two — enough for titles; not a full East Asian Width implementation.
+ * @param {string} text - Possibly colored text
+ * @returns {number} Column count
+ */
+export const visibleWidth = text => {
+  let width = 0;
+  for (const { segment } of GRAPHEMES.segment(stripVTControlCharacters(text))) {
+    width += WIDE.test(segment) ? 2 : 1;
+  }
+  return width;
+};
+
+/**
+ * Paint a row's background across the terminal, for the active list row.
+ * Padded to one column short of the width: filling the last column makes some
+ * terminals wrap. The colored columns inside only reset the foreground (39)
+ * and intensity (22), so the background holds across them.
+ * @param {string} text - Row, possibly colored
+ * @param {Array<number>} rgb - Background `[r, g, b]` in 0..255
+ * @param {number} columns - Terminal width
+ * @returns {string} The row on a 24-bit background
+ */
+export const highlightRow = (text, rgb, columns) => {
+  const padding = ' '.repeat(Math.max(0, columns - 1 - visibleWidth(text)));
+  return `\x1b[48;2;${rgb.join(';')}m${text}${padding}\x1b[49m`;
 };
 
 /**

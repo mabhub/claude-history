@@ -73,6 +73,7 @@ const helpTip = keys => keys
  * @param {unknown} [config.default] - Value of the initially active choice
  * @param {number} [config.pageSize=7] - Visible rows
  * @param {Array<[string, string]>} [config.help] - Help-line `[key, label]` pairs
+ * @param {Object} [config.theme] - Inquirer theme override; `style.highlight` paints the active row
  * @returns {Promise<unknown|{key: string, value: unknown}>} The chosen value, or the key action
  */
 export const listPrompt = createPrompt((config, done) => {
