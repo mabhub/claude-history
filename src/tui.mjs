@@ -154,11 +154,11 @@ export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
     }
 
     const session = sessions.find(s => s.sessionId === choice);
-    cursor = choice;
     const outcome = await runActionMenu(session);
     if (outcome === EXIT) return;
-    // BACK falls through to the next loop iteration, which re-fetches
-    // sessions (delete is reflected immediately).
+    cursor = outcome === DELETED ? neighbourId(sessions, choice) : choice;
+    // BACK and DELETED fall through to the next loop iteration, which
+    // re-fetches sessions (delete is reflected immediately).
   }
 };
 
@@ -249,9 +249,11 @@ const cycleSessionColor = async (s, step) => {
 // Action handlers return one of:
 //   'submenu' : stay on the per-session action menu (re-display it)
 //   'list'    : go back to the conversation list
+//   'deleted' : the session is gone — back to the list, cursor on a neighbour
 //   'exit'    : quit the whole TUI
 const STAY = 'submenu';
 const BACK = 'list';
+const DELETED = 'deleted';
 const EXIT = 'exit';
 
 const viewTranscript = async (session, { raw }) => {
@@ -328,20 +330,30 @@ const confirmDelete = async session => {
 };
 
 // Once deleted the session no longer exists — fall back to the refreshed list.
-const deleteAction = async session => ((await confirmDelete(session)) ? BACK : STAY);
+const deleteAction = async session => ((await confirmDelete(session)) ? DELETED : STAY);
+
+/**
+ * Row the list cursor moves to once a session is deleted: the next session,
+ * else the previous one.
+ * @param {Array<Object>} sessions - Sessions in list order, deleted one included
+ * @param {string} sessionId - Deleted session
+ * @returns {string|undefined} Session id for the cursor (undefined: first row)
+ */
+const neighbourId = (sessions, sessionId) => {
+  const index = sessions.findIndex(s => s.sessionId === sessionId);
+  return (sessions[index + 1] ?? sessions[index - 1])?.sessionId;
+};
 
 /**
  * `d` on a list row: confirm and delete, then pick the row the cursor returns
- * to — the next session (else the previous one) once deleted, the same one
- * if cancelled.
+ * to — a neighbour once deleted, the same one if cancelled.
  * @param {Array<Object>} sessions - Sessions in list order
  * @param {string} sessionId - Session the key was pressed on
  * @returns {Promise<string|undefined>} Session id for the cursor
  */
 const deleteFromList = async (sessions, sessionId) => {
-  const index = sessions.findIndex(s => s.sessionId === sessionId);
-  if (!(await confirmDelete(sessions[index]))) return sessionId;
-  return (sessions[index + 1] ?? sessions[index - 1])?.sessionId;
+  const session = sessions.find(s => s.sessionId === sessionId);
+  return (await confirmDelete(session)) ? neighbourId(sessions, sessionId) : sessionId;
 };
 
 const resumeAction = async session => {
@@ -413,9 +425,9 @@ const generateTitleAction = async (session, away) => {
  * @param {string} action - Selected menu value
  * @param {Object} session - Session record
  * @param {string|null} away - Cached away_summary, or null
- * @returns {Promise<'submenu'|'list'|'exit'>}
+ * @returns {Promise<'submenu'|'list'|'deleted'|'exit'>}
  */
-const runAction = (action, session, away) => {
+const runAction =(action, session, away) => {
   if (action === 'view') return viewTranscript(session, { raw: false });
   if (action === 'view-raw') return viewTranscript(session, { raw: true });
   if (action === 'rename') return renameAction(session, away);
@@ -463,8 +475,7 @@ const runActionMenu = async session => {
     if (action === null || action === 'quit') return EXIT;
 
     const outcome = await runAction(action, session, away);
-    if (outcome === BACK) return BACK;
-    if (outcome === EXIT) return EXIT;
-    // outcome === STAY: loop and re-display (annex may now be resolved).
+    if (outcome !== STAY) return outcome;
+    // STAY: loop and re-display (annex may now be resolved).
   }
 };
