@@ -9,7 +9,10 @@ import { readLatestAwaySummary } from './away-summary.mjs';
 import { generateTitle } from './title-gen.mjs';
 import { listPrompt } from './list-prompt.mjs';
 import { QUIT, promptQuittable, promptCancellable } from './prompt-keys.mjs';
-import { pipeToViewer, hasGlow, formatSessionRow, truncate, tintTitle, cycleColor, SESSION_COLOR_NAMES, MISSING } from './util.mjs';
+import {
+  pipeToViewer, hasGlow, formatSessionRow, formatDate, formatAge, formatTokens, tintTokens, tintTitle,
+  cycleColor, cacheStatus, wrapText, SESSION_COLOR_NAMES, MISSING,
+} from './util.mjs';
 import { activeRowTheme } from './terminal-theme.mjs';
 import { confirmMenu } from './confirm-menu.mjs';
 
@@ -67,8 +70,8 @@ const PENDING = Symbol('pending');
 /** Resolve after `ms` with the PENDING sentinel. */
 const delayPending = ms => new Promise(resolve => { setTimeout(() => resolve(PENDING), ms); });
 
-const AWAY_ANNEX_MAX = 200;
 const AWAY_RACE_MS = 200;
+const RECAP_MAX_LINES = 8;
 
 /**
  * Run the interactive TUI. Loops until the user quits or chooses to descend
@@ -247,20 +250,26 @@ const viewTranscript = async (session, { raw }) => {
   return STAY;
 };
 
-const renameAction = async (session, away) => {
-  if (away) console.log(pc.dim(`Résumé : ${truncate(away, AWAY_ANNEX_MAX)}`));
+/**
+ * Write a new title and keep the session record in sync, so the action menu's
+ * header shows it on the next paint.
+ * @param {Object} session - Session record (mutated: `title`, `titleSource`)
+ * @param {string} title - New title
+ * @returns {Promise<void>}
+ */
+const applyTitle = async (session, title) => {
+  await renameSession({ filePath: session.filePath, sessionId: session.sessionId, title });
+  session.title = title;
+  session.titleSource = 'custom';
+  console.log(pc.green(`✓ Renommé: ${title}`));
+};
+
+const renameAction = async session => {
   const title = await promptCancellable(input, {
     message: 'Nouveau titre',
     default: session.titleSource === 'custom' ? session.title : '',
   });
-  if (title) {
-    await renameSession({
-      filePath: session.filePath,
-      sessionId: session.sessionId,
-      title,
-    });
-    console.log(pc.green(`✓ Renommé: ${title}`));
-  }
+  if (title) await applyTitle(session, title);
   return STAY;
 };
 
@@ -370,16 +379,12 @@ const generateTitleAction = async (session, away) => {
       ],
     });
     if (choice === 'accept') {
-      await renameSession({ filePath: session.filePath, sessionId: session.sessionId, title });
-      console.log(pc.green(`✓ Renommé: ${title}`));
+      await applyTitle(session, title);
       return STAY;
     }
     if (choice === 'edit') {
       const edited = await promptCancellable(input, { message: 'Titre', default: title });
-      if (edited) {
-        await renameSession({ filePath: session.filePath, sessionId: session.sessionId, title: edited });
-        console.log(pc.green(`✓ Renommé: ${edited}`));
-      }
+      if (edited) await applyTitle(session, edited);
       return STAY;
     }
     if (choice === 'regen') {
@@ -397,16 +402,16 @@ const generateTitleAction = async (session, away) => {
 
 /**
  * Dispatch a menu action to its handler. Separated from the menu loop so the
- * two away-aware handlers (rename, generate) receive the summary explicitly.
+ * away-aware handler (generate) receives the summary explicitly.
  * @param {string} action - Selected menu value
  * @param {Object} session - Session record
  * @param {string|null} away - Cached away_summary, or null
  * @returns {Promise<'submenu'|'list'|'deleted'|'exit'>}
  */
-const runAction =(action, session, away) => {
+const runAction = (action, session, away) => {
   if (action === 'view') return viewTranscript(session, { raw: false });
   if (action === 'view-raw') return viewTranscript(session, { raw: true });
-  if (action === 'rename') return renameAction(session, away);
+  if (action === 'rename') return renameAction(session);
   if (action === 'generate') return generateTitleAction(session, away);
   if (action === 'color') return colorAction(session);
   if (action === 'delete') return deleteAction(session);
@@ -414,44 +419,96 @@ const runAction =(action, session, away) => {
   return Promise.resolve(STAY);
 };
 
+const ACTION_HELP = [['↑↓', 'naviguer'], ['⏎', 'choisir'], ['q', 'retour']];
+
+/**
+ * Print the action menu's header: title, last activity, context size, then the
+ * away_summary as a recap block, wrapped to the terminal width.
+ * @param {Object} session - Session record
+ * @param {string|null|typeof PENDING} away - Summary, null if none, PENDING while scanning
+ * @returns {void}
+ */
+const printSessionHeader = (session, away) => {
+  const badge = TITLE_SOURCE_BADGES[session.titleSource] ?? pc.dim('○');
+  const meta = [
+    pc.cyan(formatDate(session.lastActivity)),
+    formatAge(session.lastActivity),
+    tintTokens(formatTokens(session.contextTokens), session.contextTokens),
+  ].join(pc.dim(' · '));
+  console.log(`\n${badge} ${pc.dim(session.sessionId.slice(0, 8))}  ${pc.bold(tintTitle(session.title, session.color))}`);
+  console.log(`  ${meta}`);
+  if (away === PENDING) {
+    console.log(`  ${pc.dim('⏳ Récap en cours de lecture…')}`);
+  } else if (away) {
+    const bar = pc.cyan('┃');
+    const width = Math.max(20, (process.stdout.columns ?? 80) - 6);
+    console.log(`  ${bar} ${pc.bold(pc.cyan('Récap'))}`);
+    for (const line of wrapText(away, width, RECAP_MAX_LINES)) console.log(`  ${bar} ${line}`);
+  }
+  console.log('');
+};
+
+/**
+ * Action menu choices, grouped by use: read, title and color, then the two
+ * consequential ones — delete in red, resume in green while the context is
+ * cached, orange once a resume pays it in full.
+ * @param {Object} session - Session record
+ * @returns {Array<Object|Separator>}
+ */
+const actionChoices = session => {
+  const cache = cacheStatus(session);
+  const colorDot = SESSION_COLOR_NAMES.includes(session.color) ? tintTitle('●', session.color) : pc.dim('○');
+  return [
+    { name: '◉ Voir le transcript', value: 'view' },
+    { name: '◎ Voir le transcript (brut JSONL)', value: 'view-raw' },
+    new Separator(pc.dim('— Titre et couleur —')),
+    { name: tintTitle('✎ Renommer', 'blue'), value: 'rename' },
+    { name: tintTitle('✦ Générer un titre (Claude)', 'blue'), value: 'generate' },
+    { name: `${colorDot} Changer la couleur`, value: 'color' },
+    new Separator(' '),
+    { name: tintTitle('✗ Supprimer', 'red'), value: 'delete' },
+    {
+      name: tintTitle(`▶ Reprendre  · ${cache.warm ? '✓' : '⚠'} ${cache.label}`, cache.warm ? 'green' : 'orange'),
+      value: 'resume',
+    },
+    new Separator(' '),
+    { name: pc.dim('← Retour à la liste (q)'), value: 'back' },
+    { name: pc.dim('Quitter'), value: 'quit' },
+  ];
+};
+
 const runActionMenu = async session => {
   // Kick off the away scan; race a short delay so the menu never blocks but the
-  // annex shows on the first paint when the scan is quick.
+  // recap shows on the first paint when the scan is quick.
   const awayPromise = getAway(session.sessionId, session.filePath);
   let awayResolved = await Promise.race([awayPromise, delayPending(AWAY_RACE_MS)]);
+  const theme = await activeRowTheme();
+  // Cursor comes back on the last action run (e.g. after viewing the transcript).
+  let lastAction;
   while (true) {
     // On later paints the scan has settled — reflect it from the cache.
     if (awayResolved === PENDING && awayCache.has(session.sessionId)) {
       awayResolved = awayCache.get(session.sessionId);
     }
-    const away = awayResolved === PENDING ? null : awayResolved;
-    const annex = awayResolved === PENDING
-      ? pc.dim('⏳ Résumé en cours de lecture…')
-      : (away ? pc.dim(truncate(away, AWAY_ANNEX_MAX)) : '');
-    const message = annex
-      ? `${session.sessionId.slice(0, 8)} — ${session.title}\n  ${annex}`
-      : `${session.sessionId.slice(0, 8)} — ${session.title}`;
+    printSessionHeader(session, awayResolved);
 
+    const choices = actionChoices(session);
     const action = await selectQuittable({
-      message,
-      choices: [
-        { name: 'Voir le transcript', value: 'view' },
-        { name: 'Voir le transcript (brut JSONL)', value: 'view-raw' },
-        { name: 'Renommer', value: 'rename' },
-        { name: 'Générer un titre (Claude)', value: 'generate' },
-        { name: 'Changer la couleur', value: 'color' },
-        { name: 'Supprimer', value: 'delete' },
-        { name: 'Reprendre (claude --resume)', value: 'resume' },
-        { name: pc.dim(`← Retour à la liste ${pc.dim('(q)')}`), value: 'back' },
-        { name: pc.dim('Quitter'), value: 'quit' },
-      ],
-    });
+      message: 'Action',
+      choices,
+      pageSize: choices.length,
+      default: lastAction,
+      help: ACTION_HELP,
+      theme,
+    }, listPrompt);
 
     if (action === QUIT || action === 'back') return BACK;
     if (action === null || action === 'quit') return EXIT;
 
+    lastAction = action;
+    const away = awayResolved === PENDING ? null : awayResolved;
     const outcome = await runAction(action, session, away);
     if (outcome !== STAY) return outcome;
-    // STAY: loop and re-display (annex may now be resolved).
+    // STAY: loop and re-display (recap may now be resolved).
   }
 };

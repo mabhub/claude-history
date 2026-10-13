@@ -230,6 +230,29 @@ export const highlightRow = (text, rgb, columns) => {
 };
 
 /**
+ * Word-wrap plain text to `width` columns, whitespace collapsed. Past
+ * `maxLines`, the last kept line ends with "…". A word wider than `width`
+ * keeps its own line and overflows.
+ * @param {string} text - Plain text (no ANSI codes)
+ * @param {number} width - Maximum visible width of a line
+ * @param {number} [maxLines=Infinity] - Maximum number of lines
+ * @returns {Array<string>} The lines
+ */
+export const wrapText = (text, width, maxLines = Infinity) => {
+  const lines = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const last = lines.at(-1);
+    if (last !== undefined && visibleWidth(`${last} ${word}`) <= width) lines[lines.length - 1] = `${last} ${word}`;
+    else lines.push(word);
+  }
+  if (lines.length <= maxLines) return lines;
+  const kept = lines.slice(0, maxLines);
+  const last = kept.at(-1);
+  kept[maxLines - 1] = visibleWidth(`${last} …`) <= width ? `${last} …` : `${last.slice(0, -2).trimEnd()} …`;
+  return kept;
+};
+
+/**
  * Render the shared columns of one session list row: short id, absolute date,
  * relative age, context size in tokens, then title. Used by both the `ls` command and the TUI so
  * their columns stay identical. The caller prefixes any leading badge itself.

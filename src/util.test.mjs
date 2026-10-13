@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeCwd, resolveId, truncate, formatDate, formatTokens, formatAge, formatSessionRow, tintTitle, tintTokens, visibleWidth, highlightRow, cycleColor, cacheStatus } from './util.mjs';
+import { encodeCwd, resolveId, truncate, formatDate, formatTokens, formatAge, formatSessionRow, tintTitle, tintTokens, visibleWidth, highlightRow, cycleColor, cacheStatus, wrapText } from './util.mjs';
 
 test('encodeCwd: replaces slashes', () => {
   assert.equal(encodeCwd('/home/you/claude'), '-home-you-claude');
@@ -210,4 +210,16 @@ test('cacheStatus: cold when the expiry or the size is unknown', () => {
     cacheStatus({ contextTokens: null, cacheExpiresAt: null }),
     { warm: false, label: 'cache expiré · taille inconnue' },
   );
+});
+
+test('wrapText: breaks between words within the width', () => {
+  assert.deepEqual(wrapText('un deux  trois\nquatre cinq', 10), ['un deux', 'trois', 'quatre', 'cinq']);
+});
+
+test('wrapText: caps the line count and marks the cut', () => {
+  assert.deepEqual(wrapText('aa bb cc dd ee ff', 5, 2), ['aa bb', 'cc …']);
+});
+
+test('wrapText: empty text gives no line', () => {
+  assert.deepEqual(wrapText('  ', 10), []);
 });
