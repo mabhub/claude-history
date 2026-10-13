@@ -1,6 +1,5 @@
 import select, { Separator } from '@inquirer/select';
 import input from '@inquirer/input';
-import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
 import { listSessions, findSubProjects, findParentProjects, pathExists } from './discover.mjs';
 import { renderTranscript } from './transcript.mjs';
@@ -10,8 +9,9 @@ import { readLatestAwaySummary } from './away-summary.mjs';
 import { generateTitle } from './title-gen.mjs';
 import { listPrompt } from './list-prompt.mjs';
 import { QUIT, promptQuittable, promptCancellable } from './prompt-keys.mjs';
-import { pipeToViewer, hasGlow, formatSessionRow, truncate, tintTitle, cycleColor, highlightRow, SESSION_COLOR_NAMES, MISSING } from './util.mjs';
-import { detectTheme } from './terminal-theme.mjs';
+import { pipeToViewer, hasGlow, formatSessionRow, truncate, tintTitle, cycleColor, SESSION_COLOR_NAMES, MISSING } from './util.mjs';
+import { activeRowTheme } from './terminal-theme.mjs';
+import { confirmMenu } from './confirm-menu.mjs';
 
 /**
  * Run a list menu (@inquirer/select by default) where `q` and Escape go back,
@@ -70,26 +70,6 @@ const delayPending = ms => new Promise(resolve => { setTimeout(() => resolve(PEN
 const AWAY_ANNEX_MAX = 200;
 const AWAY_RACE_MS = 200;
 
-// Background of the active conversation-list row, per terminal theme: the
-// row's own column colors hide Inquirer's cyan highlight, leaving only ❯.
-const ACTIVE_ROW_BACKGROUND = { dark: [30, 45, 70], light: [220, 232, 250] };
-let listThemePromise;
-
-/**
- * Inquirer theme for the conversation list, which paints the active row on a
- * tinted background. The terminal theme is detected once per run; without
- * color support, Inquirer's default theme is kept.
- * @returns {Promise<Object|undefined>} Theme override, or undefined
- */
-const listTheme = () => {
-  listThemePromise ??= pc.isColorSupported
-    ? detectTheme().then(theme => ({
-      style: { highlight: text => highlightRow(text, ACTIVE_ROW_BACKGROUND[theme], process.stdout.columns ?? 80) },
-    }))
-    : Promise.resolve(undefined);
-  return listThemePromise;
-};
-
 /**
  * Run the interactive TUI. Loops until the user quits or chooses to descend
  * into a sub-project (then re-enters itself with the new directory).
@@ -112,7 +92,7 @@ export const runInteractive = async ({ dir, cwd, displayLabel, walkedUp }) => {
       cwd ? findSubProjects(cwd) : Promise.resolve([]),
       cwd ? findParentProjects(cwd) : Promise.resolve([]),
       cwd ? pathExists(cwd).then(ok => !ok) : Promise.resolve(true),
-      listTheme(),
+      activeRowTheme(),
     ]);
     if (sessions.length === 0 && subProjects.length === 0 && parentProjects.length === 0) {
       console.log(pc.yellow('Aucune conversation dans ce dossier.'));
@@ -316,11 +296,7 @@ const colorAction = async session => {
  * @returns {Promise<boolean>} Whether the session was deleted
  */
 const confirmDelete = async session => {
-  const ok = await promptCancellable(confirm, {
-    message: `Supprimer définitivement "${session.title}" ?`,
-    default: false,
-  });
-  if (!ok) return false;
+  if (!(await confirmMenu(`Supprimer définitivement "${session.title}" ?`))) return false;
   const { removedDir } = await deleteSession({
     filePath: session.filePath,
     sessionId: session.sessionId,

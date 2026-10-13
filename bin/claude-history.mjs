@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { program } from 'commander';
-import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
 import { findProjectDir, listSessions, listSessionIds, findSubProjects, findSessionGlobally, pathExists } from '../src/discover.mjs';
 import { renderTranscript } from '../src/transcript.mjs';
@@ -9,7 +8,7 @@ import { renameSession, setSessionColor, deleteSession } from '../src/actions.mj
 import { resumeWithCwdCheck } from '../src/resume-flow.mjs';
 import { runInteractive } from '../src/tui.mjs';
 import { cmdSkills } from '../src/skills-command.mjs';
-import { promptCancellable } from '../src/prompt-keys.mjs';
+import { confirmMenu } from '../src/confirm-menu.mjs';
 import { pipeToViewer, hasGlow, formatSessionRow, resolveId, tintTitle, MISSING } from '../src/util.mjs';
 
 /**
@@ -103,11 +102,7 @@ const confirmFoundElsewhere = async (session, verb) => {
   console.error(pc.yellow(
     `⚠ Aucune conversation avec cet id dans le projet courant — trouvée dans ${session.encodedDir}.`,
   ));
-  const ok = await promptCancellable(confirm, {
-    message: `${verb} ${session.sessionId.slice(0, 8)} hors du projet courant ?`,
-    default: false,
-  });
-  return Boolean(ok);
+  return confirmMenu(`${verb} ${session.sessionId.slice(0, 8)} hors du projet courant ?`);
 };
 
 const cmdLs = async () => {
@@ -171,11 +166,7 @@ const cmdRm = async (idOrPrefix, opts) => {
     return;
   }
   if (!opts.yes) {
-    const ok = await promptCancellable(confirm, {
-      message: `Supprimer définitivement ${sessionId.slice(0, 8)} ?`,
-      default: false,
-    });
-    if (!ok) {
+    if (!(await confirmMenu(`Supprimer définitivement ${sessionId.slice(0, 8)} ?`))) {
       console.log(pc.dim('Annulé.'));
       return;
     }

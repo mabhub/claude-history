@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import pc from 'picocolors';
+import { highlightRow } from './util.mjs';
 
 // Replies to OSC 11 ("what is your background color?"): `rgb:R/G/B`, each
 // channel 1 to 4 hex digits, terminated by BEL or ST.
@@ -86,4 +88,24 @@ export const detectTheme = async ({
   const rgb = await queryBackground();
   if (rgb) return isDarkRgb(rgb) ? 'dark' : 'light';
   return (await gnomeScheme()) === "'prefer-dark'" ? 'dark' : 'light';
+};
+
+// Background of the active row in list menus, per terminal theme: a row's own
+// column colors hide Inquirer's cyan highlight, leaving only ❯.
+const ACTIVE_ROW_BACKGROUND = { dark: [30, 45, 70], light: [220, 232, 250] };
+let activeRowThemePromise;
+
+/**
+ * Inquirer theme for list menus (conversation list, action menu, confirmations),
+ * which paints the active row on a tinted background. The terminal theme is
+ * detected once per run; without color support, Inquirer's default theme is kept.
+ * @returns {Promise<Object|undefined>} Theme override, or undefined
+ */
+export const activeRowTheme = () => {
+  activeRowThemePromise ??= pc.isColorSupported
+    ? detectTheme().then(theme => ({
+      style: { highlight: text => highlightRow(text, ACTIVE_ROW_BACKGROUND[theme], process.stdout.columns ?? 80) },
+    }))
+    : Promise.resolve(undefined);
+  return activeRowThemePromise;
 };

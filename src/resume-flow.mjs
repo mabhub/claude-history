@@ -1,11 +1,11 @@
 import select from '@inquirer/select';
 import input from '@inquirer/input';
-import confirm from '@inquirer/confirm';
 import pc from 'picocolors';
 import { resolveCwdState } from './resume-cwd.mjs';
 import { resumeSession, ensureDir } from './actions.mjs';
 import { encodeCwd } from './util.mjs';
 import { promptCancellable } from './prompt-keys.mjs';
+import { confirmMenu } from './confirm-menu.mjs';
 
 /**
  * Recreate `cwd` (mkdir -p) then resume in it. Surfaces a mkdir failure as a
@@ -71,10 +71,9 @@ const promptUnknown = async (sessionId, { encodedDir, guess }) => {
   if (!entered) return 'cancelled';
 
   if (encodeCwd(entered) !== encodedDir) {
-    const proceed = await promptCancellable(confirm, {
-      message: 'Ce dossier ne correspond pas à l\'emplacement stocké ; Claude risque de ne pas retrouver la conversation. Continuer ?',
-      default: false,
-    });
+    const proceed = await confirmMenu(
+      'Ce dossier ne correspond pas à l\'emplacement stocké ; Claude risque de ne pas retrouver la conversation. Continuer ?',
+    );
     if (!proceed) return 'cancelled';
   }
   return recreateAndResume(sessionId, entered);
