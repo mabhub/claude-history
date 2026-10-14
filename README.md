@@ -9,13 +9,13 @@ to inspect or clean up past sessions.
 Run it directly without installing:
 
 ```bash
-npx github:mabhub/claude-history
+npx @mab/claude-history
 ```
 
 Or install globally for the `claude-history` / `clh` binaries:
 
 ```bash
-npm install -g claude-history
+npm install -g @mab/claude-history
 # or from a local clone:
 git clone https://github.com/mabhub/claude-history.git
 cd claude-history
@@ -23,6 +23,8 @@ npm install && npm link
 ```
 
 Provides two binaries: `claude-history` and the shorter `clh`.
+
+The unscoped `claude-history` package on npm is an unrelated tool.
 
 ## Usage
 

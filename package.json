@@ -1,5 +1,5 @@
 {
-  "name": "claude-history",
+  "name": "@mab/claude-history",
   "version": "0.1.0",
   "description": "Browse, rename and manage Claude Code conversation transcripts for the current directory.",
   "type": "module",
@@ -44,5 +44,8 @@
   "homepage": "https://github.com/mabhub/claude-history#readme",
   "bugs": {
     "url": "https://github.com/mabhub/claude-history/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
