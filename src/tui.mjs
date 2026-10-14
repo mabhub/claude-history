@@ -425,7 +425,7 @@ const runAction = (action, session, away) => {
   return Promise.resolve(STAY);
 };
 
-const ACTION_HELP = [['↑↓', 'naviguer'], ['⏎', 'choisir'], ['q', 'retour']];
+const ACTION_HELP = [['↑↓', 'naviguer'], ['d', 'supprimer'], ['⏎', 'choisir'], ['q', 'retour']];
 
 /**
  * Print the action menu's header: title, last activity, context size, then the
@@ -457,14 +457,15 @@ const printSessionHeader = (session, away) => {
 /**
  * Action menu choices, grouped by use: read, title and color, then the two
  * consequential ones — delete in red, resume in green while the context is
- * cached, orange once a resume pays it in full.
+ * cached, orange once a resume pays it in full. Every entry takes `d`, the
+ * shortcut for Supprimer, as in the conversation list.
  * @param {Object} session - Session record
  * @returns {Array<Object|Separator>}
  */
 const actionChoices = session => {
   const cache = cacheStatus(session);
   const colorDot = SESSION_COLOR_NAMES.includes(session.color) ? tintTitle('●', session.color) : pc.dim('○');
-  return [
+  const choices = [
     { name: '◉ Voir le transcript', value: 'view' },
     { name: '◎ Voir le transcript (brut JSONL)', value: 'view-raw' },
     new Separator(pc.dim('— Titre et couleur —')),
@@ -481,6 +482,7 @@ const actionChoices = session => {
     { name: pc.dim('← Retour à la liste (q)'), value: 'back' },
     { name: pc.dim('Quitter'), value: 'quit' },
   ];
+  return choices.map(c => (c instanceof Separator ? c : { ...c, keys: ['d'] }));
 };
 
 const runActionMenu = async session => {
@@ -499,7 +501,7 @@ const runActionMenu = async session => {
     printSessionHeader(session, awayResolved);
 
     const choices = actionChoices(session);
-    const action = await selectQuittable({
+    const choice = await selectQuittable({
       message: 'Action',
       choices,
       pageSize: choices.length,
@@ -508,10 +510,12 @@ const runActionMenu = async session => {
       theme,
     }, listPrompt);
 
-    if (action === QUIT || action === 'back') return BACK;
-    if (action === null || action === 'quit') return EXIT;
+    if (choice === QUIT || choice === 'back') return BACK;
+    if (choice === null || choice === 'quit') return EXIT;
 
-    lastAction = action;
+    // `d` deletes from any row; the cursor stays on that row if it's declined.
+    const action = choice.key === 'd' ? 'delete' : choice;
+    lastAction = choice.key === 'd' ? choice.value : choice;
     const away = awayResolved === PENDING ? null : awayResolved;
     const outcome = await runAction(action, session, away);
     if (outcome !== STAY) return outcome;
